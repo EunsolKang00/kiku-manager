@@ -219,10 +219,11 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
 
 <script>
 const CLIENT_ID = '267449211500-337dbu4hfi5pq6dk1si37jf6gp2nihgi.apps.googleusercontent.com';
-const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+const SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email';
 const FILE_NAME = 'kiku_data.json';
 const SHARED_FILE_ID = '1nWwlKMjRhrsL-x1D22GZRBu0IHQsQvoG';
 const API_KEY = 'AIzaSyAMSqS7h9x1scpyMHEzTaU4cvbAbvq5Qfo';
+const OWNER_EMAIL = 'qeqe147258@gmail.com';
 const TODAY = new Date();
 
 let tokenClient, gapiInited = false, gisInited = false;
@@ -257,6 +258,7 @@ function gisLoaded() {
       setDot('loading');
       setStatus('데이터 불러오는 중...');
       await findOrCreateFile();
+      await checkOwnerAndSetUI();
       await driveAutoLoad();
     },
   });
@@ -290,6 +292,20 @@ function driveLogout() {
   document.getElementById('btn-logout').style.display = 'none';
   document.getElementById('btn-save').style.display = 'none';
   document.getElementById('btn-load').style.display = 'none';
+}
+
+async function checkOwnerAndSetUI() {
+  try {
+    const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: 'Bearer ' + gapi.client.getToken().access_token },
+    });
+    const info = await res.json();
+    const isOwner = info.email === OWNER_EMAIL;
+    document.getElementById('btn-save').style.display = isOwner ? '' : 'none';
+    document.getElementById('btn-load').style.display = '';
+  } catch(e) {
+    document.getElementById('btn-save').style.display = 'none';
+  }
 }
 
 async function findOrCreateFile() {
