@@ -119,6 +119,14 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
 .memo-text{font-size:12px;color:var(--text2);font-style:italic;margin-top:2px}
 .template-box{background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius);padding:12px;font-size:13px;line-height:1.8;white-space:pre-wrap;word-break:break-all;margin-bottom:8px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.gallery-item{position:relative;aspect-ratio:1;overflow:hidden;border-radius:var(--radius-lg);background:var(--bg2);border:0.5px solid var(--border);cursor:pointer}
+.gallery-item img{width:100%;height:100%;object-fit:cover;transition:transform 0.2s}
+.gallery-item:hover img{transform:scale(1.05)}
+.gallery-item .del-btn{position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.55);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;display:none;align-items:center;justify-content:center;font-size:14px}
+.gallery-item:hover .del-btn{display:flex}
+.gallery-lightbox{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:300;display:flex;align-items:center;justify-content:center;padding:1rem}
+.gallery-lightbox img{max-width:100%;max-height:90vh;object-fit:contain;border-radius:var(--radius)}
+.gallery-lightbox-close{position:absolute;top:1rem;right:1rem;color:#fff;font-size:24px;cursor:pointer;background:none;border:none}
 @media(max-width:480px){.form-row,.form-row-3{grid-template-columns:1fr}}
 </style>
 </head>
@@ -154,6 +162,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
     <button class="tab" onclick="switchTab('ghost')"><i class="ti ti-ghost"></i>유령 정리</button>
     <button class="tab" onclick="switchTab('stats')"><i class="ti ti-chart-bar"></i>통계</button>
     <button class="tab" onclick="switchTab('report')"><i class="ti ti-report"></i>리포트</button>
+    <button class="tab" onclick="switchTab('gallery')"><i class="ti ti-photo"></i>갤러리</button>
   </div>
 
   <div class="tab-content">
@@ -237,6 +246,16 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
       <div id="stats-content"></div>
     </div>
 
+    <!-- 갤러리 -->
+    <div id="sec-gallery" class="section">
+      <div class="flex-between mb-2">
+        <h3 style="margin-bottom:0">갤러리</h3>
+        <label class="btn btn-primary edit-only" style="cursor:pointer"><i class="ti ti-upload"></i> 사진 업로드<input type="file" accept="image/*" multiple style="display:none" onchange="uploadPhotos(event)"></label>
+      </div>
+      <div id="gallery-status" style="display:none" class="alert alert-info mb-2"><i class="ti ti-loader"></i> <span id="gallery-status-text"></span></div>
+      <div id="gallery-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px"></div>
+    </div>
+
   </div>
 </div>
 
@@ -251,6 +270,7 @@ const SHARED_FILE_ID = '1nWwlKMjRhrsL-x1D22GZRBu0IHQsQvoG';
 const API_KEY = 'AIzaSyAMSqS7h9x1scpyMHEzTaU4cvbAbvq5Qfo';
 const OWNER_EMAIL = 'qeqe147258@gmail.com';
 const REDIRECT_URI = 'https://eunsolkang00.github.io/kiku-manager/kiku_manager_drive.html';
+const GALLERY_FOLDER_ID = '1XDyKmRzPNo4mPuslP0gJ0qGOV4mw1fZ4';
 const TODAY = new Date();
 
 let tokenClient, gapiInited=false, gisInited=false, driveFileId=null, isLoggedIn=false;
@@ -805,15 +825,101 @@ function renderStats(){
   el.innerHTML=html;
 }
 
+let galleryFiles=[];
+
+async function loadGallery(){
+  const el=document.getElementById('gallery-grid');
+  if(!el)return;
+  el.innerHTML='<div style="color:var(--text2);font-size:13px">불러오는 중...</div>';
+  try{
+    const token=gapi.client.getToken();
+    const url=`https://www.googleapis.com/drive/v3/files?q='${GALLERY_FOLDER_ID}'+in+parents+and+mimeType+contains+'image/'+and+trashed=false&fields=files(id,name,createdTime)&orderBy=createdTime+desc&key=${API_KEY}`;
+    const headers=token?{Authorization:'Bearer '+token.access_token}:{};
+    const res=await fetch(url,{headers});
+    const data=await res.json();
+    galleryFiles=data.files||[];
+    renderGallery();
+  }catch(e){el.innerHTML='<div style="color:var(--text2);font-size:13px">갤러리 불러오기 실패</div>';}
+}
+
+function renderGallery(){
+  const el=document.getElementById('gallery-grid');
+  if(!el)return;
+  if(galleryFiles.length===0){
+    el.innerHTML='<div class="empty-state" style="grid-column:1/-1"><i class="ti ti-photo-off"></i>사진이 없습니다.<br>업로드 버튼으로 사진을 추가해보세요.</div>';
+    return;
+  }
+  el.innerHTML=galleryFiles.map(f=>`
+    <div class="gallery-item" onclick="openLightbox('${f.id}')">
+      <img src="https://drive.google.com/thumbnail?id=${f.id}&sz=w400" loading="lazy" alt="${f.name}">
+      ${isLoggedIn?`<button class="del-btn edit-only" onclick="event.stopPropagation();deletePhoto('${f.id}','${f.name}')"><i class="ti ti-x" style="font-size:12px"></i></button>`:''}
+    </div>`).join('');
+}
+
+function openLightbox(fileId){
+  const existing=document.getElementById('kiku-lightbox');
+  if(existing)existing.remove();
+  const lb=document.createElement('div');
+  lb.className='gallery-lightbox';lb.id='kiku-lightbox';
+  lb.innerHTML=`<button class="gallery-lightbox-close" onclick="document.getElementById('kiku-lightbox').remove()"><i class="ti ti-x"></i></button>
+    <img src="https://drive.google.com/thumbnail?id=${fileId}&sz=w1200" alt="사진">`;
+  lb.addEventListener('click',e=>{if(e.target===lb)lb.remove();});
+  document.body.appendChild(lb);
+}
+
+async function uploadPhotos(event){
+  const files=[...event.target.files];
+  if(!files.length)return;
+  const token=gapi.client.getToken();
+  if(!token){alert('로그인 후 업로드할 수 있습니다.');return;}
+  const statusEl=document.getElementById('gallery-status');
+  const statusText=document.getElementById('gallery-status-text');
+  statusEl.style.display='flex';
+  for(let i=0;i<files.length;i++){
+    const file=files[i];
+    statusText.textContent=`업로드 중... (${i+1}/${files.length}) ${file.name}`;
+    try{
+      const meta=JSON.stringify({name:file.name,parents:[GALLERY_FOLDER_ID]});
+      const form=new FormData();
+      form.append('metadata',new Blob([meta],{type:'application/json'}));
+      form.append('file',file);
+      await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',{
+        method:'POST',
+        headers:{Authorization:'Bearer '+token.access_token},
+        body:form,
+      });
+    }catch(e){console.error('업로드 실패:',file.name,e);}
+  }
+  statusText.textContent='업로드 완료!';
+  setTimeout(()=>{statusEl.style.display='none';},2000);
+  event.target.value='';
+  await loadGallery();
+}
+
+async function deletePhoto(fileId,fileName){
+  if(!confirm(`"${fileName}" 사진을 삭제할까요?`))return;
+  const token=gapi.client.getToken();
+  if(!token)return;
+  try{
+    await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`,{
+      method:'DELETE',
+      headers:{Authorization:'Bearer '+token.access_token},
+    });
+    galleryFiles=galleryFiles.filter(f=>f.id!==fileId);
+    renderGallery();
+  }catch(e){alert('삭제 실패');}
+}
+
 function renderAll(){
   document.getElementById('calc-date-display').textContent=`다음 유령 정리일: ${formatDate(getCalcDate())}`;
   renderMetrics();renderDashboardAlerts();renderGhostPreview();renderBungPreview();renderMembers();renderBungs();renderGhost();renderStats();renderReport();
 }
 
 function switchTab(tab){
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['dashboard','members','bung','ghost','stats','report'][i]===tab));
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['dashboard','members','bung','ghost','stats','report','gallery'][i]===tab));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+tab).classList.add('active');
+  if(tab==='gallery')loadGallery();
 }
 
 function toggleContact(id,val){const m=members.find(x=>x.id===id);if(m){m.contacted=val;renderAll();}}
