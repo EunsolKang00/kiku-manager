@@ -220,6 +220,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
 const CLIENT_ID = '267449211500-337dbu4hfi5pq6dk1si37jf6gp2nihgi.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 const FILE_NAME = 'kiku_data.json';
+const SHARED_FILE_ID = '1nWwlKMjRhrsL-x1D22GZRBu0IHQsQvoG';
 const TODAY = new Date();
 
 let tokenClient, gapiInited = false, gisInited = false;
@@ -290,28 +291,9 @@ function driveLogout() {
 }
 
 async function findOrCreateFile() {
-  setDot('loading');
-  setStatus('드라이브에서 파일 확인 중...');
-  try {
-    const res = await gapi.client.drive.files.list({
-      q: `name='${FILE_NAME}' and trashed=false`,
-      spaces: 'drive',
-      fields: 'files(id, name, modifiedTime)',
-    });
-    const files = res.result.files;
-    if (files && files.length > 0) {
-      driveFileId = files[0].id;
-      const modified = new Date(files[0].modifiedTime);
-      setDot('connected');
-      setStatus(`드라이브 파일 발견 (마지막 저장: ${formatDate(modified)} ${modified.toTimeString().slice(0,5)}) — 불러오기를 눌러주세요`);
-    } else {
-      setDot('connected');
-      setStatus('드라이브에 저장된 파일 없음 — 저장 버튼을 눌러 새로 생성하세요');
-    }
-  } catch(e) {
-    setDot('disconnected');
-    setStatus('파일 확인 실패: ' + e.message);
-  }
+  // 공유 파일 ID로 고정
+  driveFileId = SHARED_FILE_ID;
+  setDot('connected');
 }
 
 async function driveSave() {
@@ -321,26 +303,11 @@ async function driveSave() {
   const data = JSON.stringify({ members, bungs, nextMemberId, nextBungId, savedAt: new Date().toISOString(), version: '1.0' }, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
   try {
-    if (driveFileId) {
-      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
-        method: 'PATCH',
-        headers: { Authorization: 'Bearer ' + gapi.client.getToken().access_token, 'Content-Type': 'application/json' },
-        body: blob,
-      });
-    } else {
-      const meta = await fetch('https://www.googleapis.com/drive/v3/files', {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + gapi.client.getToken().access_token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: FILE_NAME, mimeType: 'application/json' }),
-      });
-      const metaJson = await meta.json();
-      driveFileId = metaJson.id;
-      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
-        method: 'PATCH',
-        headers: { Authorization: 'Bearer ' + gapi.client.getToken().access_token, 'Content-Type': 'application/json' },
-        body: blob,
-      });
-    }
+    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${SHARED_FILE_ID}?uploadType=media`, {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer ' + gapi.client.getToken().access_token, 'Content-Type': 'application/json' },
+      body: blob,
+    });
     setDot('connected');
     const now = new Date();
     setStatus(`드라이브 저장 완료 — ${formatDate(now)} ${now.toTimeString().slice(0,5)}`);
