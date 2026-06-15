@@ -536,6 +536,16 @@ function renderGhost() {
   document.getElementById('ghost-table-area').innerHTML = html;
 }
 
+function filterAttendees(query, listId) {
+  const list = document.getElementById(listId);
+  if (!list) return;
+  const labels = list.querySelectorAll('.attendee-label');
+  labels.forEach(label => {
+    const name = label.getAttribute('data-name') || '';
+    label.style.display = name.includes(query) ? '' : 'none';
+  });
+}
+
 function renderAll() {
   document.getElementById('calc-date-display').textContent = `다음 유령 정리일: ${formatDate(getCalcDate())}`;
   renderMetrics(); renderDashboardAlerts(); renderGhostPreview(); renderBungPreview(); renderMembers(); renderBungs(); renderGhost();
@@ -607,7 +617,7 @@ function editMember(id) {
 function openAddBung() {
   openModal(`<div class="modal-title"><i class="ti ti-calendar-plus" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>벙 추가</div>
     <div class="form-row"><div class="form-group"><label>벙 이름</label><input type="text" id="b-name" placeholder="6월 정모" autofocus></div><div class="form-group"><label>날짜</label><input type="date" id="b-date" value="${TODAY.toISOString().slice(0,10)}"></div></div>
-    <div class="form-group"><label>참석자 선택</label><div class="attendee-scroll">${members.length===0?'<div style="color:var(--text2);font-size:13px;padding:8px 0">먼저 회원을 추가해주세요.</div>':members.map(m=>`<label class="attendee-label"><input type="checkbox" class="attend-check" value="${m.id}"> ${m.name}</label>`).join('')}</div></div>
+    <div class="form-group"><label>참석자 선택</label><input type="text" id="member-search" placeholder="이름 검색..." oninput="filterAttendees(this.value, 'add-attendee-list')" style="margin-bottom:6px"><div class="attendee-scroll" id="add-attendee-list">${members.length===0?'<div style="color:var(--text2);font-size:13px;padding:8px 0">먼저 회원을 추가해주세요.</div>':members.map(m=>`<label class="attendee-label" data-name="${m.name}"><input type="checkbox" class="attend-check" value="${m.id}"> ${m.name}</label>`).join('')}</div></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="addBung()">추가</button></div>`);
 }
 function addBung() {
@@ -623,7 +633,7 @@ function openEditBung(id) {
   const b = bungs.find(x => x.id===id); if (!b) return;
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>참석 수정 — ${b.name}</div>
     <div class="form-row"><div class="form-group"><label>벙 이름</label><input type="text" id="eb-name" value="${b.name}"></div><div class="form-group"><label>날짜</label><input type="date" id="eb-date" value="${b.date}"></div></div>
-    <div class="form-group"><label>참석자 선택</label><div class="attendee-scroll">${members.map(m=>`<label class="attendee-label"><input type="checkbox" class="attend-check" value="${m.id}" ${b.attendees.includes(m.id)?'checked':''}> ${m.name}</label>`).join('')}</div></div>
+    <div class="form-group"><label>참석자 선택</label><input type="text" id="member-search-edit" placeholder="이름 검색..." oninput="filterAttendees(this.value, 'edit-attendee-list')" style="margin-bottom:6px"><div class="attendee-scroll" id="edit-attendee-list">${members.map(m=>`<label class="attendee-label" data-name="${m.name}"><input type="checkbox" class="attend-check" value="${m.id}" ${b.attendees.includes(m.id)?'checked':''}> ${m.name}</label>`).join('')}</div></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editBung(${id})">저장</button></div>`);
 }
 function editBung(id) {
