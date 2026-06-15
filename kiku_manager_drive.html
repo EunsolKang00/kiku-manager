@@ -250,6 +250,7 @@ const SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googl
 const SHARED_FILE_ID = '1nWwlKMjRhrsL-x1D22GZRBu0IHQsQvoG';
 const API_KEY = 'AIzaSyAMSqS7h9x1scpyMHEzTaU4cvbAbvq5Qfo';
 const OWNER_EMAIL = 'qeqe147258@gmail.com';
+const REDIRECT_URI = 'https://eunsolkang00.github.io/kiku-manager/kiku_manager_drive.html';
 const TODAY = new Date();
 
 let tokenClient, gapiInited=false, gisInited=false, driveFileId=null;
@@ -283,10 +284,41 @@ function gisLoaded(){
   gisInited=true; maybeEnableButtons();
 }
 function maybeEnableButtons(){
-  if(gapiInited&&gisInited){ document.getElementById('btn-login').disabled=false; trySilentLogin(); }
+  if(gapiInited&&gisInited){
+    document.getElementById('btn-login').disabled=false;
+    // URL에 code 파라미터가 있으면 리다이렉트 로그인 완료
+    const hash=new URLSearchParams(window.location.hash.replace('#',''));
+    if(hash.get('access_token')) handleRedirectLogin();
+    else trySilentLogin();
+  }
 }
 function trySilentLogin(){ tokenClient.requestAccessToken({prompt:''}); }
-function driveLogin(){ tokenClient.requestAccessToken({prompt:'select_account'}); }
+function driveLogin(){
+  // 모바일 감지 시 리다이렉트, PC는 팝업
+  const isMobile=/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  if(isMobile){
+    const url=`https://accounts.google.com/o/oauth2/v2/auth?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${encodeURIComponent(SCOPES)}&prompt=select_account`;
+    window.location.href=url;
+  } else {
+    tokenClient.requestAccessToken({prompt:'select_account'});
+  }
+}
+async function handleRedirectLogin(){
+  // 리다이렉트 후 access_token이 hash에 담겨 옴
+  const hash=new URLSearchParams(window.location.hash.replace('#',''));
+  const token=hash.get('access_token');
+  if(!token)return;
+  gapi.client.setToken({access_token:token});
+  history.replaceState(null,'',window.location.pathname);
+  setDot('connected');
+  document.getElementById('btn-login').style.display='none';
+  document.getElementById('btn-logout').style.display='';
+  document.getElementById('btn-load').style.display='';
+  setDot('loading'); setStatus('데이터 불러오는 중...');
+  await findOrCreateFile();
+  await checkOwnerAndSetUI();
+  await driveAutoLoad();
+}
 function driveLogout(){
   const token=gapi.client.getToken();
   if(token) google.accounts.oauth2.revoke(token.access_token);
@@ -858,9 +890,9 @@ function openEditBung(id){
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>벙 수정 — ${b.name}</div>
     <div class="form-row"><div class="form-group"><label>벙 이름</label><input type="text" id="eb-name" value="${b.name}"></div><div class="form-group"><label>날짜</label><input type="date" id="eb-date" value="${b.date}"></div></div>
     <div class="form-row"><div class="form-group"><label>구분</label><select id="eb-type"><option value="정모" ${b.type==='정모'?'selected':''}>정모</option><option value="번개" ${b.type==='번개'?'selected':''}>번개</option></select></div><div class="form-group"><label>장소</label><input type="text" id="eb-place" value="${b.place||''}"></div></div>
-    <div class="form-row"><div class="form-group"><label>벙주</label><select id="eb-host"><option value="">선택 안 함</option>${members.map(m=>`<option value="${m.id}" ${b.hostId===m.id?'selected':''}>${m.name}</option>`).join('')}</select></div><div class="form-group"><label>시간</label><input type="text" id="eb-time" value="${b.time||''}"></div></div>
-    <div class="form-group"><label>주제</label><input type="text" id="eb-topic" value="${b.topic||''}"></div>
+    <div class="form-row"><div class="form-group"><label>시간</label><input type="text" id="eb-time" value="${b.time||''}"></div><div class="form-group"><label>주제</label><input type="text" id="eb-topic" value="${b.topic||''}"></div></div>
     <div class="form-group"><label>참석자 선택</label>${memberSelectHTML('edit',b.attendees)}</div>
+    <div class="form-group"><label>벙주 (참석자 중 선택)</label><select id="eb-host"><option value="">선택 안 함</option>${b.attendees.map(id=>{const m=members.find(x=>x.id===id);return m?`<option value="${m.id}" ${b.hostId===m.id?'selected':''}>${m.name}</option>`:''}).join('')}</select></div>
     <div class="form-group"><label>메모</label><textarea id="eb-memo">${b.memo||''}</textarea></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editBung(${id})">저장</button></div>`);
 }
@@ -917,6 +949,7 @@ function handleAttendeeAdd(mode){
   const names=input.value.split(/[,،]/).map(n=>n.trim()).filter(Boolean);
   names.forEach(name=>{const m=members.find(x=>x.name===name);if(m)addAttendeeTag(m.id,m.name,mode);});
   input.value='';
+  updateHostSelect(mode);
 }
 function addAttendeeTag(id,name,mode){
   const tagArea=document.getElementById(`${mode}-tag-area`);
@@ -928,12 +961,28 @@ function addAttendeeTag(id,name,mode){
   tag.innerHTML=`${name} <span style="cursor:pointer;margin-left:2px" onclick="removeAttendeeTag(this,'${mode}')">×</span>`;
   tagArea.appendChild(tag);
   if(list){const cb=list.querySelector(`.attend-check[value="${id}"]`);if(cb)cb.checked=true;}
+  updateHostSelect(mode);
 }
 function removeAttendeeTag(el,mode){
   const tag=el.parentElement;const id=tag.getAttribute('data-id');
   const list=document.getElementById(`${mode}-attendee-list`);
   tag.remove();
   if(list){const cb=list.querySelector(`.attend-check[value="${id}"]`);if(cb)cb.checked=false;}
+  updateHostSelect(mode);
+}
+function updateHostSelect(mode){
+  const prefix=mode==='add'?'b':'eb';
+  const hostSel=document.getElementById(`${prefix}-host`);
+  if(!hostSel)return;
+  const tagArea=document.getElementById(`${mode}-tag-area`);
+  if(!tagArea)return;
+  const tags=[...tagArea.querySelectorAll('.attendee-tag')];
+  const currentVal=hostSel.value;
+  hostSel.innerHTML='<option value="">선택 안 함</option>'+tags.map(tag=>{
+    const id=tag.getAttribute('data-id');
+    const m=members.find(x=>x.id===parseInt(id));
+    return m?`<option value="${m.id}" ${currentVal==m.id?'selected':''}>${m.name}</option>`:'';
+  }).join('');
 }
 function toggleAttendeeTag(label,mode){
   const id=label.getAttribute('data-id'),name=label.getAttribute('data-name');
@@ -941,6 +990,7 @@ function toggleAttendeeTag(label,mode){
   const tagArea=document.getElementById(`${mode}-tag-area`);if(!tagArea)return;
   if(cb.checked){const tag=tagArea.querySelector(`[data-id="${id}"]`);if(tag)tag.remove();cb.checked=false;}
   else{addAttendeeTag(id,name,mode);}
+  updateHostSelect(mode);
 }
 
 // ── 유령 초기화 ───────────────────────────────────────────────────
