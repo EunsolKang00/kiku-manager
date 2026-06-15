@@ -672,8 +672,8 @@ function renderReport(){
 }
 
 function getMemberGrade(rate){
-  if(rate>=80)return{label:'⭐ 우수',color:'var(--success)',bg:'var(--success-bg)'};
-  if(rate>=40)return{label:'✅ 활동',color:'var(--info)',bg:'var(--info-bg)'};
+  if(rate>=60)return{label:'⭐ 우수',color:'var(--success)',bg:'var(--success-bg)'};
+  if(rate>=20)return{label:'✅ 활동',color:'var(--info)',bg:'var(--info-bg)'};
   return{label:'👤 일반',color:'var(--text2)',bg:'var(--bg2)'};
 }
 
@@ -741,7 +741,7 @@ function renderStats(){
         </tbody>
       </table>
     </div>
-    <div style="font-size:12px;color:var(--text2);margin-top:8px">등급 기준: ⭐ 우수 80% 이상 | ✅ 활동 40~79% | 👤 일반 40% 미만</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:8px">등급 기준: ⭐ 우수 60% 이상 | ✅ 활동 20~59% | 👤 일반 20% 미만</div>
   </div>`;
   el.innerHTML=html;
 }
