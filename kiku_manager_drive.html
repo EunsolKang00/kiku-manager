@@ -260,7 +260,10 @@ let members=[], bungs=[], nextMemberId=1, nextBungId=1;
 function gapiLoaded(){
   gapi.load('client',async()=>{
     await gapi.client.init({discoveryDocs:['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest']});
-    gapiInited=true; maybeEnableButtons();
+    gapiInited=true;
+    // 로그인 없이 공개 데이터 바로 불러오기
+    await publicLoad();
+    maybeEnableButtons();
   });
 }
 function gisLoaded(){
@@ -293,6 +296,20 @@ function maybeEnableButtons(){
   }
 }
 function trySilentLogin(){ tokenClient.requestAccessToken({prompt:''}); }
+async function publicLoad(){
+  try{
+    const res=await fetch(`https://www.googleapis.com/drive/v3/files/${SHARED_FILE_ID}?alt=media&key=${API_KEY}`);
+    if(!res.ok)return;
+    const data=await res.json();
+    members=data.members||[]; bungs=data.bungs||[];
+    nextMemberId=data.nextMemberId||Math.max(0,...members.map(m=>m.id))+1;
+    nextBungId=data.nextBungId||Math.max(0,...bungs.map(b=>b.id))+1;
+    const now=new Date(data.savedAt);
+    setStatus(`열람 모드 — 마지막 저장: ${formatDate(now)} ${isNaN(now)?'':now.toTimeString().slice(0,5)} | 저장하려면 로그인하세요`);
+    renderAll();
+  }catch(e){ setStatus('데이터 불러오기 실패 — 로그인 후 시도해주세요'); }
+}
+
 function driveLogin(){
   // 모바일 감지 시 리다이렉트, PC는 팝업
   const isMobile=/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
