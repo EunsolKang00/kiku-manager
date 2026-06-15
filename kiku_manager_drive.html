@@ -240,14 +240,21 @@ function gisLoaded() {
     client_id: CLIENT_ID,
     scope: SCOPES,
     callback: async (resp) => {
-      if (resp.error) { setStatus('로그인 실패: ' + resp.error, 'error'); return; }
+      if (resp.error) {
+        // 자동 로그인 실패는 조용히 무시 (처음 방문 or 토큰 만료)
+        if (resp.error === 'interaction_required' || resp.error === 'access_denied') return;
+        setStatus('로그인 실패: ' + resp.error);
+        return;
+      }
       setDot('connected');
       document.getElementById('btn-login').style.display = 'none';
       document.getElementById('btn-logout').style.display = '';
       document.getElementById('btn-save').style.display = '';
       document.getElementById('btn-load').style.display = '';
-      setStatus('Google Drive 연결됨 — 불러오기를 눌러 기존 데이터를 가져오세요');
+      setDot('loading');
+      setStatus('데이터 불러오는 중...');
       await findOrCreateFile();
+      await driveAutoLoad();
     },
   });
   gisInited = true;
@@ -257,11 +264,16 @@ function gisLoaded() {
 function maybeEnableButtons() {
   if (gapiInited && gisInited) {
     document.getElementById('btn-login').disabled = false;
+    trySilentLogin();
   }
 }
 
+function trySilentLogin() {
+  tokenClient.requestAccessToken({ prompt: '' });
+}
+
 function driveLogin() {
-  tokenClient.requestAccessToken({ prompt: 'consent' });
+  tokenClient.requestAccessToken({ prompt: 'select_account' });
 }
 
 function driveLogout() {
@@ -335,6 +347,27 @@ async function driveSave() {
   } catch(e) {
     setDot('disconnected');
     setStatus('저장 실패: ' + e.message);
+  }
+}
+
+async function driveAutoLoad() {
+  if (!driveFileId) return;
+  try {
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`, {
+      headers: { Authorization: 'Bearer ' + gapi.client.getToken().access_token },
+    });
+    const data = await res.json();
+    members = data.members || [];
+    bungs = data.bungs || [];
+    nextMemberId = data.nextMemberId || Math.max(0, ...members.map(m => m.id)) + 1;
+    nextBungId = data.nextBungId || Math.max(0, ...bungs.map(b => b.id)) + 1;
+    setDot('connected');
+    const now = new Date(data.savedAt);
+    setStatus(`자동 불러오기 완료 — 회원 ${members.length}명, 벙 ${bungs.length}개 (저장: ${formatDate(now)} ${isNaN(now)?'':now.toTimeString().slice(0,5)})`);
+    renderAll();
+  } catch(e) {
+    setDot('connected');
+    setStatus('드라이브 연결됨 — 데이터 불러오기 실패, 수동으로 불러오기를 눌러주세요');
   }
 }
 
