@@ -101,6 +101,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
 .bung-card{background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;margin-bottom:10px}
 .attendee-scroll{max-height:180px;overflow-y:auto;border:0.5px solid var(--border2);border-radius:var(--radius);padding:8px}
 .attendee-label{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:13px}
+.attendee-tag{display:inline-flex;align-items:center;background:var(--purple-bg);color:var(--purple);font-size:12px;padding:3px 10px;border-radius:var(--radius);font-weight:500}
 .drive-status{display:flex;align-items:center;gap:6px;font-size:12px}
 .drive-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .drive-dot.connected{background:var(--success)}
@@ -318,9 +319,8 @@ async function driveSave() {
 }
 
 async function driveAutoLoad() {
-  if (!driveFileId) return;
   try {
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`, {
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${SHARED_FILE_ID}?alt=media`, {
       headers: { Authorization: 'Bearer ' + gapi.client.getToken().access_token },
     });
     const data = await res.json();
@@ -339,11 +339,10 @@ async function driveAutoLoad() {
 }
 
 async function driveLoad() {
-  if (!driveFileId) { alert('드라이브에 저장된 파일이 없습니다. 먼저 저장해주세요.'); return; }
   setDot('loading');
   setStatus('드라이브에서 불러오는 중...');
   try {
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`, {
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${SHARED_FILE_ID}?alt=media`, {
       headers: { Authorization: 'Bearer ' + gapi.client.getToken().access_token },
     });
     const data = await res.json();
@@ -536,14 +535,86 @@ function renderGhost() {
   document.getElementById('ghost-table-area').innerHTML = html;
 }
 
-function filterAttendees(query, listId) {
+function handleAttendeeInput(e, mode) {
+  if (e.key === 'Enter' || e.key === ',') {
+    e.preventDefault();
+    handleAttendeeAdd(mode);
+  }
+}
+
+function handleAttendeeAdd(mode) {
+  const inputId = mode === 'add' ? 'member-search' : 'member-search-edit';
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  const names = input.value.split(/[,،]/).map(n => n.trim()).filter(Boolean);
+  names.forEach(name => {
+    const m = members.find(x => x.name === name);
+    if (m) addAttendeeTag(m.id, m.name, mode);
+  });
+  input.value = '';
+  // 검색어로 리스트 필터링
+  filterAttendeeList('', mode);
+}
+
+function filterAttendeeList(query, mode) {
+  const listId = mode === 'add' ? 'add-attendee-list' : 'edit-attendee-list';
   const list = document.getElementById(listId);
   if (!list) return;
-  const labels = list.querySelectorAll('.attendee-label');
-  labels.forEach(label => {
+  list.querySelectorAll('.attendee-label').forEach(label => {
     const name = label.getAttribute('data-name') || '';
-    label.style.display = name.includes(query) ? '' : 'none';
+    label.style.display = query === '' || name.includes(query) ? '' : 'none';
   });
+}
+
+function addAttendeeTag(id, name, mode) {
+  const tagAreaId = mode === 'add' ? 'add-tag-area' : 'edit-tag-area';
+  const listId = mode === 'add' ? 'add-attendee-list' : 'edit-attendee-list';
+  const tagArea = document.getElementById(tagAreaId);
+  if (!tagArea) return;
+  // 이미 있으면 추가 안 함
+  if (tagArea.querySelector(`[data-id="${id}"]`)) return;
+  const tag = document.createElement('span');
+  tag.className = 'attendee-tag';
+  tag.setAttribute('data-id', id);
+  tag.innerHTML = `${name} <span style="cursor:pointer;margin-left:2px" onclick="removeAttendeeTag(this,'${mode}')">×</span>`;
+  tagArea.appendChild(tag);
+  // 체크박스도 체크
+  const list = document.getElementById(listId);
+  if (list) {
+    const cb = list.querySelector(`.attend-check[value="${id}"]`);
+    if (cb) cb.checked = true;
+  }
+}
+
+function removeAttendeeTag(el, mode) {
+  const tag = el.parentElement;
+  const id = tag.getAttribute('data-id');
+  const listId = mode === 'add' ? 'add-attendee-list' : 'edit-attendee-list';
+  tag.remove();
+  // 체크박스도 해제
+  const list = document.getElementById(listId);
+  if (list) {
+    const cb = list.querySelector(`.attend-check[value="${id}"]`);
+    if (cb) cb.checked = false;
+  }
+}
+
+function toggleAttendeeTag(label, mode) {
+  const id = label.getAttribute('data-id');
+  const name = label.getAttribute('data-name');
+  const cb = label.querySelector('.attend-check');
+  const tagAreaId = mode === 'add' ? 'add-tag-area' : 'edit-tag-area';
+  const tagArea = document.getElementById(tagAreaId);
+  if (!tagArea) return;
+  if (cb.checked) {
+    // 체크 해제 → 태그 제거
+    const tag = tagArea.querySelector(`[data-id="${id}"]`);
+    if (tag) tag.remove();
+    cb.checked = false;
+  } else {
+    // 체크 → 태그 추가
+    addAttendeeTag(id, name, mode);
+  }
 }
 
 function renderAll() {
@@ -584,7 +655,7 @@ function recalcLastAttend() {
 
 function openModal(html) { document.getElementById('modal-content').innerHTML = html; document.getElementById('modal-backdrop').classList.add('open'); }
 function closeModal() { document.getElementById('modal-backdrop').classList.remove('open'); }
-function handleBackdropClick(e) { if (e.target === document.getElementById('modal-backdrop')) closeModal(); }
+function handleBackdropClick(e) { /* 바깥 클릭해도 닫히지 않음 */ }
 
 function openAddMember() {
   openModal(`<div class="modal-title"><i class="ti ti-user-plus" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>회원 추가</div>
@@ -617,7 +688,14 @@ function editMember(id) {
 function openAddBung() {
   openModal(`<div class="modal-title"><i class="ti ti-calendar-plus" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>벙 추가</div>
     <div class="form-row"><div class="form-group"><label>벙 이름</label><input type="text" id="b-name" placeholder="6월 정모" autofocus></div><div class="form-group"><label>날짜</label><input type="date" id="b-date" value="${TODAY.toISOString().slice(0,10)}"></div></div>
-    <div class="form-group"><label>참석자 선택</label><input type="text" id="member-search" placeholder="이름 검색..." oninput="filterAttendees(this.value, 'add-attendee-list')" style="margin-bottom:6px"><div class="attendee-scroll" id="add-attendee-list">${members.length===0?'<div style="color:var(--text2);font-size:13px;padding:8px 0">먼저 회원을 추가해주세요.</div>':members.map(m=>`<label class="attendee-label" data-name="${m.name}"><input type="checkbox" class="attend-check" value="${m.id}"> ${m.name}</label>`).join('')}</div></div>
+    <div class="form-group"><label>참석자 선택</label>
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <input type="text" id="member-search" placeholder="이름 입력 후 엔터 또는 쉼표로 구분 (예: 펭귄, 공룡)" style="flex:1" onkeydown="handleAttendeeInput(event, 'add')">
+        <button class="btn btn-sm" onclick="handleAttendeeAdd('add')" type="button">추가</button>
+      </div>
+      <div id="add-tag-area" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:28px"></div>
+      <div class="attendee-scroll" id="add-attendee-list">${members.length===0?'<div style="color:var(--text2);font-size:13px;padding:8px 0">먼저 회원을 추가해주세요.</div>':members.map(m=>`<label class="attendee-label" data-name="${m.name}" data-id="${m.id}" onclick="toggleAttendeeTag(this,'add')" style="cursor:pointer"><input type="checkbox" class="attend-check" value="${m.id}"> ${m.name}</label>`).join('')}</div>
+    </div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="addBung()">추가</button></div>`);
 }
 function addBung() {
@@ -633,7 +711,14 @@ function openEditBung(id) {
   const b = bungs.find(x => x.id===id); if (!b) return;
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>참석 수정 — ${b.name}</div>
     <div class="form-row"><div class="form-group"><label>벙 이름</label><input type="text" id="eb-name" value="${b.name}"></div><div class="form-group"><label>날짜</label><input type="date" id="eb-date" value="${b.date}"></div></div>
-    <div class="form-group"><label>참석자 선택</label><input type="text" id="member-search-edit" placeholder="이름 검색..." oninput="filterAttendees(this.value, 'edit-attendee-list')" style="margin-bottom:6px"><div class="attendee-scroll" id="edit-attendee-list">${members.map(m=>`<label class="attendee-label" data-name="${m.name}"><input type="checkbox" class="attend-check" value="${m.id}" ${b.attendees.includes(m.id)?'checked':''}> ${m.name}</label>`).join('')}</div></div>
+    <div class="form-group"><label>참석자 선택</label>
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <input type="text" id="member-search-edit" placeholder="이름 입력 후 엔터 또는 쉼표로 구분" style="flex:1" onkeydown="handleAttendeeInput(event, 'edit')">
+        <button class="btn btn-sm" onclick="handleAttendeeAdd('edit')" type="button">추가</button>
+      </div>
+      <div id="edit-tag-area" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:28px">${b.attendees.map(id=>{const m=members.find(x=>x.id===id);return m?`<span class="attendee-tag" data-id="${m.id}">${m.name} <span onclick="removeAttendeeTag(this,'edit')" style="cursor:pointer;margin-left:2px">×</span></span>`:''}).join('')}</div>
+      <div class="attendee-scroll" id="edit-attendee-list">${members.map(m=>`<label class="attendee-label" data-name="${m.name}" data-id="${m.id}" onclick="toggleAttendeeTag(this,'edit')" style="cursor:pointer"><input type="checkbox" class="attend-check" value="${m.id}" ${b.attendees.includes(m.id)?'checked':''}> ${m.name}</label>`).join('')}</div>
+    </div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editBung(${id})">저장</button></div>`);
 }
 function editBung(id) {
