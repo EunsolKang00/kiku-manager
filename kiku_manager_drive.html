@@ -182,7 +182,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
     <div id="sec-members" class="section">
       <div class="flex-between mb-2">
         <h3 style="margin-bottom:0">전체 회원</h3>
-        <button class="btn btn-primary" onclick="openAddMember()"><i class="ti ti-plus"></i>회원 추가</button>
+        <button class="btn btn-primary edit-only" onclick="openAddMember()"><i class="ti ti-plus"></i>회원 추가</button>
       </div>
       <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
         <table>
@@ -197,7 +197,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
     <div id="sec-bung" class="section">
       <div class="flex-between mb-2">
         <h3 style="margin-bottom:0">벙 목록</h3>
-        <button class="btn btn-primary" onclick="openAddBung()"><i class="ti ti-plus"></i>벙 추가</button>
+        <button class="btn btn-primary edit-only" onclick="openAddBung()"><i class="ti ti-plus"></i>벙 추가</button>
       </div>
       <div id="bung-list"></div>
     </div>
@@ -220,7 +220,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
           <div class="flex">
             <span class="text-sm text-secondary" id="ghost-calc-info"></span>
             <button class="btn btn-info btn-sm" onclick="openGhostMessage()"><i class="ti ti-message"></i>퇴출 메시지 생성</button>
-            <button class="btn btn-danger btn-sm" id="reset-btn" onclick="confirmReset()" style="display:none"><i class="ti ti-refresh"></i>초기화 실행</button>
+            <button class="btn btn-danger btn-sm edit-only" id="reset-btn" onclick="confirmReset()" style="display:none"><i class="ti ti-refresh"></i>초기화 실행</button>
           </div>
         </div>
         <div id="ghost-table-area"></div>
@@ -253,7 +253,7 @@ const OWNER_EMAIL = 'qeqe147258@gmail.com';
 const REDIRECT_URI = 'https://eunsolkang00.github.io/kiku-manager/kiku_manager_drive.html';
 const TODAY = new Date();
 
-let tokenClient, gapiInited=false, gisInited=false, driveFileId=null;
+let tokenClient, gapiInited=false, gisInited=false, driveFileId=null, isLoggedIn=false;
 let members=[], bungs=[], nextMemberId=1, nextBungId=1;
 
 // ── Google API ─────────────────────────────────────────────────────
@@ -274,6 +274,7 @@ function gisLoaded(){
         if(resp.error==='interaction_required'||resp.error==='access_denied') return;
         setStatus('로그인 실패: '+resp.error); return;
       }
+      isLoggedIn=true;
       setDot('connected');
       document.getElementById('btn-login').style.display='none';
       document.getElementById('btn-logout').style.display='';
@@ -282,6 +283,7 @@ function gisLoaded(){
       await findOrCreateFile();
       await checkOwnerAndSetUI();
       await driveAutoLoad();
+      updateEditMode();
     },
   });
   gisInited=true; maybeEnableButtons();
@@ -289,13 +291,17 @@ function gisLoaded(){
 function maybeEnableButtons(){
   if(gapiInited&&gisInited){
     document.getElementById('btn-login').disabled=false;
-    // URL에 code 파라미터가 있으면 리다이렉트 로그인 완료
     const hash=new URLSearchParams(window.location.hash.replace('#',''));
     if(hash.get('access_token')) handleRedirectLogin();
-    else trySilentLogin();
+    // 자동 로그인 시도 안 함 — 버튼 클릭 시에만 로그인
   }
 }
-function trySilentLogin(){ tokenClient.requestAccessToken({prompt:''}); }
+function updateEditMode(){
+  // 편집 버튼들 (추가/수정/삭제) 로그인 여부에 따라 표시/숨김
+  const editEls=document.querySelectorAll('.edit-only');
+  editEls.forEach(el=>el.style.display=isLoggedIn?'':'none');
+}
+
 async function publicLoad(){
   try{
     const res=await fetch(`https://www.googleapis.com/drive/v3/files/${SHARED_FILE_ID}?alt=media&key=${API_KEY}`);
@@ -307,6 +313,7 @@ async function publicLoad(){
     const now=new Date(data.savedAt);
     setStatus(`열람 모드 — 마지막 저장: ${formatDate(now)} ${isNaN(now)?'':now.toTimeString().slice(0,5)} | 저장하려면 로그인하세요`);
     renderAll();
+    updateEditMode();
   }catch(e){ setStatus('데이터 불러오기 실패 — 로그인 후 시도해주세요'); }
 }
 
@@ -327,6 +334,7 @@ async function handleRedirectLogin(){
   if(!token)return;
   gapi.client.setToken({access_token:token});
   history.replaceState(null,'',window.location.pathname);
+  isLoggedIn=true;
   setDot('connected');
   document.getElementById('btn-login').style.display='none';
   document.getElementById('btn-logout').style.display='';
@@ -335,16 +343,18 @@ async function handleRedirectLogin(){
   await findOrCreateFile();
   await checkOwnerAndSetUI();
   await driveAutoLoad();
+  updateEditMode();
 }
 function driveLogout(){
   const token=gapi.client.getToken();
   if(token) google.accounts.oauth2.revoke(token.access_token);
-  gapi.client.setToken(''); driveFileId=null;
-  setDot('disconnected'); setStatus('Google Drive 연결 안 됨');
+  gapi.client.setToken(''); driveFileId=null; isLoggedIn=false;
+  setDot('disconnected'); setStatus('열람 모드 — 저장하려면 로그인하세요');
   document.getElementById('btn-login').style.display='';
   document.getElementById('btn-logout').style.display='none';
   document.getElementById('btn-save').style.display='none';
   document.getElementById('btn-load').style.display='none';
+  updateEditMode();
 }
 async function checkOwnerAndSetUI(){
   try{
@@ -528,7 +538,7 @@ function renderMembers(){
     const rate=totalBungs>0?Math.round(attended/totalBungs*100):0;
     const grade=getMemberGrade(rate);
     const gradeBadge=`<span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${grade.bg};color:${grade.color};font-weight:500">${grade.label}</span>`;
-    return `<tr${rc}><td><strong>${m.name}</strong></td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'<span style="color:var(--text2)">없음</span>'}</td><td style="text-align:center"><input type="checkbox" class="contact-check" ${m.contacted?'checked':''} onchange="toggleContact(${m.id},this.checked)"></td><td>${badgeMap[status]}</td><td>${gradeBadge}</td><td>${memo}</td><td><div class="flex" style="gap:4px"><button class="btn btn-sm" onclick="openEditMember(${m.id})"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-danger" onclick="deleteMember(${m.id})"><i class="ti ti-trash"></i></button></div></td></tr>`;
+    return `<tr${rc}><td><strong>${m.name}</strong></td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'<span style="color:var(--text2)">없음</span>'}</td><td style="text-align:center"><input type="checkbox" class="contact-check" ${m.contacted?'checked':''} onchange="toggleContact(${m.id},this.checked)" ${isLoggedIn?'':' disabled'}></td><td>${badgeMap[status]}</td><td>${gradeBadge}</td><td>${memo}</td><td class="edit-only"><div class="flex" style="gap:4px"><button class="btn btn-sm" onclick="openEditMember(${m.id})"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-danger" onclick="deleteMember(${m.id})"><i class="ti ti-trash"></i></button></div></td></tr>`;
   }).join('');
 }
 
@@ -546,8 +556,8 @@ function renderBungs(){
         <div class="flex">${typeBadge}<strong>${b.name}</strong>${isPast?'<span class="badge badge-safe">완료</span>':'<span class="badge badge-new">예정</span>'}</div>
         <div class="flex" style="gap:4px">
           <button class="btn btn-sm btn-info" onclick="openTemplate(${b.id})"><i class="ti ti-speakerphone"></i> 공지</button>
-          <button class="btn btn-sm" onclick="openEditBung(${b.id})"><i class="ti ti-edit"></i> 수정</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteBung(${b.id})"><i class="ti ti-trash"></i></button>
+          <button class="btn btn-sm edit-only" onclick="openEditBung(${b.id})"><i class="ti ti-edit"></i> 수정</button>
+          <button class="btn btn-sm btn-danger edit-only" onclick="deleteBung(${b.id})"><i class="ti ti-trash"></i></button>
         </div>
       </div>
       <div class="bung-card-meta">
