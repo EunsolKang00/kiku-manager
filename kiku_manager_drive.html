@@ -381,7 +381,10 @@ function setDot(state) { document.getElementById('drive-dot').className = 'drive
 
 function getCalcDate() {
   const m = TODAY.getMonth()+1, y = TODAY.getFullYear();
-  const ne = m%2===0 ? m : m+1;
+  // 이번 달이 짝수이고 오늘이 1일이면 오늘이 기산일
+  if (m%2===0 && TODAY.getDate()===1) return new Date(y, m-1, 1);
+  // 이번 달이 짝수지만 1일이 지났으면 다음 짝수달로
+  const ne = m%2===0 ? m+2 : m+1;
   if (ne > 12) return new Date(y+1, 1, 1);
   return new Date(y, ne-1, 1);
 }
