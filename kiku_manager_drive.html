@@ -293,7 +293,7 @@ function maybeEnableButtons(){
     document.getElementById('btn-login').disabled=false;
     const hash=new URLSearchParams(window.location.hash.replace('#',''));
     if(hash.get('access_token')) handleRedirectLogin();
-    // 자동 로그인 시도 안 함 — 버튼 클릭 시에만 로그인
+    else tokenClient.requestAccessToken({prompt:''});  // silent login 시도
   }
 }
 function updateEditMode(){
@@ -756,7 +756,7 @@ function renderStats(){
     return;
   }
   const top3=stats.slice(0,3);
-  const gradeCount={우수:stats.filter(s=>s.rate>=80).length,활동:stats.filter(s=>s.rate>=40&&s.rate<80).length,일반:stats.filter(s=>s.rate<40).length};
+  const gradeCount={우수:stats.filter(s=>s.rate>=60).length,활동:stats.filter(s=>s.rate>=20&&s.rate<60).length,일반:stats.filter(s=>s.rate<20).length};
 
   let html=`
   <div class="metric-grid" style="margin-bottom:1.5rem">
