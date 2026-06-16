@@ -570,21 +570,22 @@ function renderMetrics(){
       const host=nextBung.hostId?members.find(x=>x.id===nextBung.hostId):null;
       const d=new Date(nextBung.date);
       const weekdays=['일','월','화','수','목','금','토'];
-      nextBungEl.innerHTML=`<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:0">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-          <div>
-            <div style="font-size:11px;color:var(--text2);font-weight:500;letter-spacing:0.3px;margin-bottom:4px">다음 예정 벙</div>
-            <div style="font-size:18px;font-weight:500">${nextBung.name}</div>
-            <div style="font-size:13px;color:var(--text2);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap">
-              <span><i class="ti ti-calendar" style="font-size:13px;vertical-align:-1px"></i> ${d.getMonth()+1}월 ${d.getDate()}일(${weekdays[d.getDay()]})</span>
-              ${nextBung.place?`<span><i class="ti ti-map-pin" style="font-size:13px;vertical-align:-1px"></i> ${nextBung.place}</span>`:''}
-              ${nextBung.time?`<span><i class="ti ti-clock" style="font-size:13px;vertical-align:-1px"></i> ${nextBung.time}</span>`:''}
-              ${host?`<span><i class="ti ti-crown" style="font-size:13px;vertical-align:-1px"></i> ${host.name}</span>`:''}
+      nextBungEl.innerHTML=`<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.5rem;margin-bottom:0;position:relative;overflow:hidden">
+        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--info),var(--purple))"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;color:var(--text2);font-weight:500;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px">다음 예정 벙</div>
+            <div style="font-size:20px;font-weight:500;margin-bottom:8px">${nextBung.name}</div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap">
+              <span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px"><i class="ti ti-calendar" style="font-size:14px;color:var(--info)"></i>${d.getMonth()+1}월 ${d.getDate()}일(${weekdays[d.getDay()]})</span>
+              ${nextBung.place?`<span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px"><i class="ti ti-map-pin" style="font-size:14px;color:var(--danger)"></i>${nextBung.place}</span>`:''}
+              ${nextBung.time?`<span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px"><i class="ti ti-clock" style="font-size:14px;color:var(--success)"></i>${nextBung.time}</span>`:''}
+              ${host?`<span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px"><i class="ti ti-crown" style="font-size:14px;color:var(--warn)"></i>${host.name}</span>`:''}
             </div>
           </div>
-          <div style="text-align:center;background:var(--info-bg);border-radius:var(--radius-lg);padding:12px 20px;flex-shrink:0">
-            <div style="font-size:28px;font-weight:500;color:var(--info)">${daysLeft}</div>
-            <div style="font-size:11px;color:var(--info);font-weight:500">일 후</div>
+          <div style="text-align:center;background:var(--info-bg);border-radius:var(--radius-lg);padding:14px 22px;flex-shrink:0">
+            <div style="font-size:36px;font-weight:500;color:var(--info);line-height:1">${daysLeft}</div>
+            <div style="font-size:11px;color:var(--info);font-weight:500;margin-top:4px">일 후</div>
           </div>
         </div>
       </div>`;
@@ -596,27 +597,29 @@ function renderMetrics(){
   // 회원 현황 카드
   const statsEl=document.getElementById('dash-stats-card');
   if(statsEl){
-    statsEl.innerHTML=`<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;height:100%">
-      <div style="font-size:11px;color:var(--text2);font-weight:500;letter-spacing:0.3px;margin-bottom:12px">회원 현황</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center">
-          <div style="font-size:11px;color:var(--text2);margin-bottom:2px">전체</div>
-          <div style="font-size:20px;font-weight:500">${c.total}명</div>
+    statsEl.innerHTML=`<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:13px;font-weight:500">회원 현황</div>
+        <button class="btn btn-sm" onclick="switchTab('members')" style="font-size:11px">보기 →</button>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;padding:0 4px;margin-bottom:14px">
+        <div style="text-align:center">
+          <div style="font-size:28px;font-weight:500">${c.total}</div>
+          <div style="font-size:11px;color:var(--text2)">전체</div>
         </div>
-        <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center">
-          <div style="font-size:11px;color:var(--text2);margin-bottom:2px">총 벙</div>
-          <div style="font-size:20px;font-weight:500">${bungs.length}회</div>
+        <div style="text-align:center">
+          <div style="font-size:28px;font-weight:500;color:var(--success)">${c.safe}</div>
+          <div style="font-size:11px;color:var(--text2)">정상</div>
         </div>
-        <div style="background:var(--success-bg);border-radius:var(--radius);padding:10px;text-align:center">
-          <div style="font-size:11px;color:var(--success);margin-bottom:2px">정상</div>
-          <div style="font-size:20px;font-weight:500;color:var(--success)">${c.safe}명</div>
+        <div style="text-align:center">
+          <div style="font-size:28px;font-weight:500;color:var(--info)">${c.new}</div>
+          <div style="font-size:11px;color:var(--text2)">신규</div>
         </div>
-        <div style="background:var(--info-bg);border-radius:var(--radius);padding:10px;text-align:center">
-          <div style="font-size:11px;color:var(--info);margin-bottom:2px">신규</div>
-          <div style="font-size:20px;font-weight:500;color:var(--info)">${c.new}명</div>
+        <div style="text-align:center">
+          <div style="font-size:28px;font-weight:500">${bungs.length}</div>
+          <div style="font-size:11px;color:var(--text2)">총 벙</div>
         </div>
       </div>
-      <button class="btn btn-sm" onclick="switchTab('members')" style="width:100%;margin-top:10px;font-size:12px">전체 보기 →</button>
     </div>`;
   }
 
@@ -624,19 +627,22 @@ function renderMetrics(){
   const ghostEl=document.getElementById('dash-ghost-card');
   if(ghostEl){
     const hasGhost=c.ghost>0||c.warn>0;
-    ghostEl.innerHTML=`<div style="background:var(--bg);border:0.5px solid ${hasGhost?'var(--danger-border)':'var(--border)'};border-radius:var(--radius-lg);padding:1.25rem;height:100%">
-      <div style="font-size:11px;color:var(--text2);font-weight:500;letter-spacing:0.3px;margin-bottom:12px">유령 현황</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-        <div style="background:var(--danger-bg);border-radius:var(--radius);padding:10px;text-align:center">
-          <div style="font-size:11px;color:var(--danger);margin-bottom:2px">퇴출 대상</div>
-          <div style="font-size:20px;font-weight:500;color:var(--danger)">${c.ghost}명</div>
+    ghostEl.innerHTML=`<div style="background:var(--bg);border:0.5px solid ${hasGhost?'var(--danger-border)':'var(--border)'};border-radius:var(--radius-lg);padding:1.25rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:13px;font-weight:500">유령 현황</div>
+        <button class="btn btn-sm ${hasGhost?'btn-danger':''}" onclick="switchTab('ghost')" style="font-size:11px">정리 탭 →</button>
+      </div>
+      <div style="display:flex;justify-content:space-around;align-items:flex-end;padding:0 4px">
+        <div style="text-align:center">
+          <div style="font-size:28px;font-weight:500;color:var(--danger)">${c.ghost}</div>
+          <div style="font-size:11px;color:var(--text2)">퇴출 대상</div>
         </div>
-        <div style="background:var(--warn-bg);border-radius:var(--radius);padding:10px;text-align:center">
-          <div style="font-size:11px;color:var(--warn);margin-bottom:2px">연락 완료</div>
-          <div style="font-size:20px;font-weight:500;color:var(--warn)">${c.warn}명</div>
+        <div style="width:0.5px;height:40px;background:var(--border)"></div>
+        <div style="text-align:center">
+          <div style="font-size:28px;font-weight:500;color:var(--warn)">${c.warn}</div>
+          <div style="font-size:11px;color:var(--text2)">연락 완료</div>
         </div>
       </div>
-      <button class="btn btn-sm ${hasGhost?'btn-danger':''}" onclick="switchTab('ghost')" style="width:100%;font-size:12px">유령 정리 탭 →</button>
     </div>`;
   }
 
@@ -760,18 +766,6 @@ function renderMembers(){
   const empty=document.getElementById('member-empty');
   if(members.length===0){tbody.innerHTML='';empty.style.display='block';return;}
   empty.style.display='none';
-  const sortEl=document.getElementById('member-sort');
-  const sortBy=sortEl?sortEl.value:'join';
-  const totalBungsForSort=bungs.length;
-  const sorted=[...members].sort((a,b)=>{
-    if(sortBy==='name') return a.name.localeCompare(b.name,'ko');
-    if(sortBy==='rate'){
-      const ra=totalBungsForSort>0?bungs.filter(bung=>bung.attendees.includes(a.id)).length/totalBungsForSort:0;
-      const rb=totalBungsForSort>0?bungs.filter(bung=>bung.attendees.includes(b.id)).length/totalBungsForSort:0;
-      return rb-ra;
-    }
-    return new Date(a.joinDate)-new Date(b.joinDate);
-  });
   const sortVal=document.getElementById('member-sort')?document.getElementById('member-sort').value:'join';
   const sorted=[...members].sort((a,b)=>{
     if(sortVal==='name') return a.name.localeCompare(b.name,'ko');
