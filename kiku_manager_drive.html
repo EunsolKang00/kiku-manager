@@ -119,6 +119,14 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
 .memo-text{font-size:12px;color:var(--text2);font-style:italic;margin-top:2px}
 .template-box{background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius);padding:12px;font-size:13px;line-height:1.8;white-space:pre-wrap;word-break:break-all;margin-bottom:8px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+:root[data-theme='light']{--bg:#ffffff;--bg2:#f7f7f5;--bg3:#f0efe9;--text:#1a1a1a;--text2:#6b6b6b;--text3:#9a9a9a;--border:rgba(0,0,0,0.1);--border2:rgba(0,0,0,0.18)}
+:root[data-theme='dark']{--bg:#1c1c1a;--bg2:#242422;--bg3:#2a2a28;--text:#f0efe9;--text2:#9a9a90;--text3:#6b6b65;--border:rgba(255,255,255,0.1);--border2:rgba(255,255,255,0.18);--danger-bg:#3a1a1a;--danger:#F09595;--danger-border:#791F1F;--warn-bg:#3a2e10;--warn:#FAC775;--warn-border:#633806;--info-bg:#0e1e36;--info:#85B7EB;--info-border:#0C447C;--success-bg:#162310;--success:#97C459;--success-border:#27500A;--purple-bg:#1e1c3a;--purple:#AFA9EC}
+.hall-card{background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:1rem}
+.update-item{border-left:3px solid var(--info);padding:10px 16px;margin-bottom:12px;background:var(--bg2);border-radius:0 var(--radius) var(--radius) 0}
+.update-version{font-weight:500;font-size:13px;color:var(--info)}
+.update-date{font-size:11px;color:var(--text2);margin-bottom:6px}
+.update-list{font-size:13px;color:var(--text);line-height:1.8}
+.anniversary-badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:var(--radius);background:var(--warn-bg);color:var(--warn);font-weight:500;margin-left:6px}
 .gallery-item{position:relative;aspect-ratio:1;overflow:hidden;border-radius:var(--radius-lg);background:var(--bg2);border:0.5px solid var(--border);cursor:pointer}
 .gallery-item img{width:100%;height:100%;object-fit:cover;transition:transform 0.2s}
 .gallery-item:hover img{transform:scale(1.05)}
@@ -138,6 +146,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
         <div style="font-size:18px;font-weight:500">🎤 KIKU 회원 관리</div>
         <div class="text-sm text-secondary" id="calc-date-display" style="margin-top:2px"></div>
       </div>
+      <button class="btn btn-sm" onclick="toggleTheme()" id="theme-btn" title="다크모드/라이트모드 전환"><i class="ti ti-moon" id="theme-icon"></i></button>
     </div>
   </div>
 
@@ -163,6 +172,8 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
     <button class="tab" onclick="switchTab('stats')"><i class="ti ti-chart-bar"></i>통계</button>
     <button class="tab" onclick="switchTab('report')"><i class="ti ti-report"></i>리포트</button>
     <button class="tab" onclick="switchTab('gallery')"><i class="ti ti-photo"></i>갤러리</button>
+    <button class="tab" onclick="switchTab('hall')"><i class="ti ti-trophy"></i>명예의전당</button>
+    <button class="tab" onclick="switchTab('updates')"><i class="ti ti-news"></i>업데이트</button>
   </div>
 
   <div class="tab-content">
@@ -191,7 +202,10 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
     <div id="sec-members" class="section">
       <div class="flex-between mb-2">
         <h3 style="margin-bottom:0">전체 회원</h3>
-        <button class="btn btn-primary edit-only" onclick="openAddMember()"><i class="ti ti-plus"></i>회원 추가</button>
+        <div class="flex" style="gap:8px">
+          <input type="text" id="member-search-input" placeholder="회원 검색..." style="width:160px;padding:5px 10px" oninput="filterMembers(this.value)">
+          <button class="btn btn-primary edit-only" onclick="openAddMember()"><i class="ti ti-plus"></i>회원 추가</button>
+        </div>
       </div>
       <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
         <table>
@@ -244,6 +258,16 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
     <!-- 통계 -->
     <div id="sec-stats" class="section">
       <div id="stats-content"></div>
+    </div>
+
+    <!-- 명예의 전당 -->
+    <div id="sec-hall" class="section">
+      <div id="hall-content"></div>
+    </div>
+
+    <!-- 업데이트 내역 -->
+    <div id="sec-updates" class="section">
+      <div id="updates-content"></div>
     </div>
 
     <!-- 갤러리 -->
@@ -910,13 +934,146 @@ async function deletePhoto(fileId,fileName){
   }catch(e){alert('삭제 실패');}
 }
 
+// ── 다크모드 토글 ────────────────────────────────────────────────
+function toggleTheme(){
+  const root=document.documentElement;
+  const current=root.getAttribute('data-theme');
+  const next=current==='dark'?'light':'dark';
+  root.setAttribute('data-theme',next);
+  localStorage.setItem('kiku-theme',next);
+  document.getElementById('theme-icon').className=next==='dark'?'ti ti-sun':'ti ti-moon';
+}
+function initTheme(){
+  const saved=localStorage.getItem('kiku-theme');
+  const prefersDark=window.matchMedia('(prefers-color-scheme:dark)').matches;
+  const theme=saved||(prefersDark?'dark':'light');
+  document.documentElement.setAttribute('data-theme',theme);
+  const icon=document.getElementById('theme-icon');
+  if(icon)icon.className=theme==='dark'?'ti ti-sun':'ti ti-moon';
+}
+
+// ── 회원 검색 ─────────────────────────────────────────────────────
+function filterMembers(query){
+  const tbody=document.getElementById('member-tbody');
+  if(!tbody)return;
+  const rows=tbody.querySelectorAll('tr');
+  rows.forEach(row=>{
+    const name=row.querySelector('td strong');
+    if(!name){row.style.display='';return;}
+    row.style.display=name.textContent.includes(query)?'':'none';
+  });
+}
+
+// ── 명예의 전당 ───────────────────────────────────────────────────
+function renderHall(){
+  const el=document.getElementById('hall-content');
+  if(!el)return;
+
+  const today=new Date();
+
+  // 역대 참여율 TOP 3
+  const stats=getMemberStats();
+  const top3=stats.slice(0,3);
+  const medals=['🥇','🥈','🥉'];
+  const medalColors=['#FFD700','#C0C0C0','#CD7F32'];
+
+  // 이달의 벙주
+  const thisMonth=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+  const thisMonthBungs=bungs.filter(b=>b.date.startsWith(thisMonth)&&b.hostId);
+  const hostCount={};
+  thisMonthBungs.forEach(b=>{hostCount[b.hostId]=(hostCount[b.hostId]||0)+1;});
+  const topHostId=Object.keys(hostCount).sort((a,b)=>hostCount[b]-hostCount[a])[0];
+  const topHost=topHostId?members.find(x=>x.id===parseInt(topHostId)):null;
+
+  // 가입 기념일 (오늘 기준 ±7일)
+  const anniversaries=members.filter(m=>{
+    const join=new Date(m.joinDate);
+    const thisYearAnniv=new Date(today.getFullYear(),join.getMonth(),join.getDate());
+    const diff=Math.abs(daysBetween(today,thisYearAnniv));
+    return diff<=7 && (today.getFullYear()-join.getFullYear())>=1;
+  }).map(m=>{
+    const join=new Date(m.joinDate);
+    const years=today.getFullYear()-join.getFullYear();
+    return{...m,years};
+  });
+
+  let html=`
+  <!-- 이달의 벙주 -->
+  <div class="hall-card mb-2">
+    <h3>👑 이달의 벙주 (${today.getMonth()+1}월)</h3>
+    ${topHost?`
+    <div style="display:flex;align-items:center;gap:16px;padding:12px 0">
+      <div style="font-size:48px">👑</div>
+      <div>
+        <div style="font-size:20px;font-weight:500">${topHost.name}</div>
+        <div style="font-size:13px;color:var(--text2);margin-top:4px">이번 달 ${hostCount[topHostId]}회 벙주 담당</div>
+      </div>
+    </div>`:`<div style="font-size:13px;color:var(--text2);padding:8px 0">이번 달 벙주 기록이 없습니다.</div>`}
+  </div>
+
+  <!-- 가입 기념일 -->
+  ${anniversaries.length>0?`
+  <div class="hall-card mb-2">
+    <h3>🎂 이번 주 가입 기념일</h3>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+      ${anniversaries.map(m=>`
+      <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:0.5px solid var(--border)">
+        <span style="font-size:24px">🎉</span>
+        <div>
+          <strong>${m.name}</strong><span class="anniversary-badge">${m.years}주년</span>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px">가입일: ${formatDate(m.joinDate)}</div>
+        </div>
+      </div>`).join('')}
+    </div>
+  </div>`:''}
+
+  <!-- 역대 TOP 3 -->
+  <div class="hall-card">
+    <h3>🏆 역대 참여율 명예의 전당</h3>
+    ${bungs.length===0?'<div style="font-size:13px;color:var(--text2)">벙 데이터가 없습니다.</div>':
+    `<div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">
+      ${top3.map((s,i)=>`
+      <div style="display:flex;align-items:center;gap:16px;background:var(--bg3);border-radius:var(--radius-lg);padding:12px 16px">
+        <div style="font-size:32px">${medals[i]}</div>
+        <div style="flex:1">
+          <div style="font-weight:500;font-size:15px">${s.name}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px">${s.attended}회 참석 / 전체 ${bungs.length}회</div>
+          <div style="background:var(--bg);border-radius:4px;height:6px;overflow:hidden;margin-top:6px"><div style="width:${s.rate}%;background:${s.grade.color};height:100%;border-radius:4px"></div></div>
+        </div>
+        <div style="font-size:24px;font-weight:500;color:${s.grade.color}">${s.rate}%</div>
+      </div>`).join('')}
+    </div>`}
+  </div>`;
+
+  el.innerHTML=html;
+}
+
+// ── 업데이트 내역 ─────────────────────────────────────────────────
+const UPDATES=[
+  {version:'v1.3',date:'2026.06.15',items:['갤러리 탭 추가 — 사진 업로드/삭제/라이트박스','명예의 전당 탭 추가 — 역대 TOP 3, 이달의 벙주, 가입 기념일','회원 검색 기능 추가','다크모드/라이트모드 수동 토글 추가','업데이트 내역 탭 추가']},
+  {version:'v1.2',date:'2026.06.15',items:['통계 탭 추가 — 참여율 랭킹, 등급 시스템','리포트 탭 추가 — 월별/분기별 현황','벙 공지 템플릿 생성 기능','벙주 지정, 장소, 시간, 주제 입력 추가','유령 퇴출 메시지 자동 생성','회원 메모 기능 추가','정모/번개 구분 추가','파비콘 🎤 마이크 이모지 적용']},
+  {version:'v1.1',date:'2026.06.15',items:['Google Drive 연동 저장/불러오기','로그인 없이 열람 가능 (읽기 전용 모드)','편집 버튼 로그인 여부에 따라 표시/숨김','참석자 입력 — 쉼표/엔터로 여러 명 한꺼번에 추가','벙주 드롭다운 — 참석자 중에서만 선택','GitHub Pages 배포']},
+  {version:'v1.0',date:'2026.06.15',items:['최초 출시','회원 추가/수정/삭제','벙 관리 및 참석자 기록','유령 회원 자동 판정 (3가지 조건)','대시보드 및 유령 정리 탭']},
+];
+
+function renderUpdates(){
+  const el=document.getElementById('updates-content');
+  if(!el)return;
+  el.innerHTML=`<h3 style="margin-bottom:1rem">📋 패치 내역</h3>`+UPDATES.map(u=>`
+    <div class="update-item">
+      <div class="update-version">${u.version}</div>
+      <div class="update-date">${u.date}</div>
+      <div class="update-list">${u.items.map(i=>`• ${i}`).join('<br>')}</div>
+    </div>`).join('');
+}
+
 function renderAll(){
   document.getElementById('calc-date-display').textContent=`다음 유령 정리일: ${formatDate(getCalcDate())}`;
-  renderMetrics();renderDashboardAlerts();renderGhostPreview();renderBungPreview();renderMembers();renderBungs();renderGhost();renderStats();renderReport();
+  renderMetrics();renderDashboardAlerts();renderGhostPreview();renderBungPreview();renderMembers();renderBungs();renderGhost();renderStats();renderReport();renderHall();renderUpdates();
 }
 
 function switchTab(tab){
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['dashboard','members','bung','ghost','stats','report','gallery'][i]===tab));
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['dashboard','members','bung','ghost','stats','report','gallery','hall','updates'][i]===tab));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+tab).classList.add('active');
   if(tab==='gallery')loadGallery();
@@ -1135,6 +1292,7 @@ function confirmReset(){
 }
 function doReset(){members.forEach(m=>m.contacted=false);closeModal();renderAll();}
 
+initTheme();
 renderAll();
 </script>
 <script src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
