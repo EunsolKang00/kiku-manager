@@ -149,6 +149,18 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
 .achievement-badge.locked{opacity:0.45;filter:grayscale(1)}
 .avatar{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--purple-bg);color:var(--purple);font-size:11px;font-weight:500;flex-shrink:0;border:1.5px solid var(--bg)}
 .timeline-item{display:flex;gap:12px;padding:12px 0;border-bottom:0.5px solid var(--border)}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.cal-header{text-align:center;font-size:11px;color:var(--text2);font-weight:500;padding:6px 0}
+.cal-day{min-height:72px;border-radius:var(--radius);padding:4px;background:var(--bg2);position:relative;font-size:12px}
+.cal-day.today{border:1.5px solid var(--info)}
+.cal-day.other-month{opacity:0.35}
+.cal-day-num{font-size:11px;color:var(--text2);margin-bottom:3px;font-weight:500}
+.cal-day.today .cal-day-num{color:var(--info);font-weight:500}
+.cal-event{font-size:10px;padding:2px 5px;border-radius:3px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.cal-event.jeongmo{background:var(--info-bg);color:var(--info)}
+.cal-event.bungae{background:var(--warn-bg);color:var(--warn)}
+.profile-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:1rem}
+.profile-avatar{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:500;flex-shrink:0}
 .timeline-dot{width:8px;height:8px;border-radius:50%;background:var(--info);flex-shrink:0;margin-top:5px}
 .timeline-line{width:1px;background:var(--border);flex-shrink:0;margin:0 3.5px}
 .update-item{border-left:3px solid var(--info);padding:10px 16px;margin-bottom:12px;background:var(--bg2);border-radius:0 var(--radius) var(--radius) 0}
@@ -186,6 +198,9 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
       <div class="nav-divider"></div>
       <button class="nav-item" onclick="switchTab('gallery')"><i class="ti ti-photo"></i>갤러리</button>
       <button class="nav-item" onclick="switchTab('updates')"><i class="ti ti-news"></i>업데이트</button>
+      <div class="nav-divider"></div>
+      <button class="nav-item" onclick="switchTab('calendar')"><i class="ti ti-calendar-month"></i>캘린더</button>
+      <button class="nav-item" onclick="switchTab('profile')"><i class="ti ti-user-circle"></i>회원 프로필</button>
     </nav>
   </aside>
 
@@ -320,6 +335,16 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
     <!-- 업데이트 내역 -->
     <div id="sec-updates" class="section">
       <div id="updates-content"></div>
+    </div>
+
+    <!-- 캘린더 -->
+    <div id="sec-calendar" class="section">
+      <div id="calendar-content"></div>
+    </div>
+
+    <!-- 회원 프로필 -->
+    <div id="sec-profile" class="section">
+      <div id="profile-content"></div>
     </div>
 
     <!-- 갤러리 -->
@@ -709,6 +734,95 @@ function renderMetrics(){
     }
     html+=`</div>`;
     recentEl.innerHTML=html;
+  }
+
+  // ── 이달의 MVP ────────────────────────────────────────────────
+  const mvpEl=document.getElementById('dash-mvp');
+  if(mvpEl){
+    const thisMonth=`${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,'0')}`;
+    const thisMonthBungs=bungs.filter(b=>b.date.startsWith(thisMonth));
+    let mvp=null;
+    if(thisMonthBungs.length>0){
+      const attendCount={};
+      thisMonthBungs.forEach(b=>b.attendees.forEach(id=>{attendCount[id]=(attendCount[id]||0)+1;}));
+      const topId=Object.keys(attendCount).sort((a,b)=>attendCount[b]-attendCount[a])[0];
+      mvp=topId?members.find(x=>x.id===parseInt(topId)):null;
+      if(mvp)mvp={...mvp,count:attendCount[topId],total:thisMonthBungs.length};
+    }
+    mvpEl.innerHTML=`<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
+      <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase;margin-bottom:10px">⭐ 이달의 MVP</div>
+      ${mvp?`<div style="display:flex;align-items:center;gap:10px">
+        <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--warn-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:500;flex-shrink:0">${mvp.name[0]}</div>
+        <div>
+          <div style="font-weight:500">${mvp.name}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px">이번 달 ${mvp.count}/${mvp.total}회 참석</div>
+        </div>
+        <div style="margin-left:auto;font-size:22px">🏆</div>
+      </div>`:`<div style="font-size:13px;color:var(--text2)">이번 달 벙 기록 없음</div>`}
+    </div>`;
+  }
+
+  // ── 이번 달 신규 회원 ─────────────────────────────────────────
+  const newbiesEl=document.getElementById('dash-newbies');
+  if(newbiesEl){
+    const thisMonth=`${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,'0')}`;
+    const newbies=members.filter(m=>m.joinDate.startsWith(thisMonth));
+    newbiesEl.innerHTML=`<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
+      <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase;margin-bottom:10px">🌱 이번 달 신규 (${newbies.length}명)</div>
+      ${newbies.length===0?`<div style="font-size:13px;color:var(--text2)">신규 회원 없음</div>`:
+      `<div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${newbies.map(m=>`<span style="font-size:12px;padding:3px 10px;border-radius:20px;background:var(--success-bg);color:var(--success);font-weight:500">${m.name}</span>`).join('')}
+      </div>`}
+    </div>`;
+  }
+
+  // ── 다가오는 기념일 ───────────────────────────────────────────
+  const annexEl=document.getElementById('dash-anniversary');
+  if(annexEl){
+    const upcoming14=members.map(m=>{
+      const join=new Date(m.joinDate);
+      const years=TODAY.getFullYear()-join.getFullYear();
+      if(years<1)return null;
+      const anniv=new Date(TODAY.getFullYear(),join.getMonth(),join.getDate());
+      const diff=Math.floor((anniv-TODAY)/(1000*60*60*24));
+      if(diff<0||diff>14)return null;
+      return{...m,years,diff};
+    }).filter(Boolean).sort((a,b)=>a.diff-b.diff);
+    annexEl.innerHTML=`<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
+      <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase;margin-bottom:10px">🎂 다가오는 기념일</div>
+      ${upcoming14.length===0?`<div style="font-size:13px;color:var(--text2)">2주 내 기념일 없음</div>`:
+      `<div style="display:flex;flex-direction:column;gap:6px">
+        ${upcoming14.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:13px;font-weight:500">${m.name} <span style="font-size:11px;color:var(--warn);font-weight:400">${m.years}주년</span></div>
+          <div style="font-size:12px;color:var(--text2)">${m.diff===0?'오늘!':m.diff+'일 후'}</div>
+        </div>`).join('')}
+      </div>`}
+    </div>`;
+  }
+
+  // ── 최근 업적 피드 ────────────────────────────────────────────
+  const achvFeedEl=document.getElementById('dash-recent-achievements');
+  if(achvFeedEl){
+    const recentAchvs=[];
+    members.forEach(m=>{
+      const achvs=getAchievements(m).filter(a=>a.unlocked);
+      achvs.forEach(a=>recentAchvs.push({member:m.name,icon:a.icon,label:a.label}));
+    });
+    if(recentAchvs.length>0){
+      const show=recentAchvs.slice(-6).reverse();
+      achvFeedEl.innerHTML=`<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
+        <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase;margin-bottom:10px">🎖️ 업적 현황</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          ${show.map(a=>`<div style="display:flex;align-items:center;gap:6px;background:var(--bg2);border-radius:var(--radius);padding:6px 10px;font-size:12px">
+            <span style="font-size:16px">${a.icon}</span>
+            <span style="font-weight:500">${a.member}</span>
+            <span style="color:var(--text2)">${a.label}</span>
+          </div>`).join('')}
+        </div>
+      </div>`;
+    } else {
+      achvFeedEl.innerHTML='';
+    }
   }
 }
 function renderDashboardAlerts(){
@@ -1293,12 +1407,9 @@ function renderHall(){
   if(!el)return;
 
   const today=new Date();
-
-  // 역대 참여율 TOP 3
   const stats=getMemberStats();
   const top3=stats.slice(0,3);
   const medals=['🥇','🥈','🥉'];
-  const medalColors=['#FFD700','#C0C0C0','#CD7F32'];
 
   // 이달의 벙주
   const thisMonth=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
@@ -1308,91 +1419,434 @@ function renderHall(){
   const topHostId=Object.keys(hostCount).sort((a,b)=>hostCount[b]-hostCount[a])[0];
   const topHost=topHostId?members.find(x=>x.id===parseInt(topHostId)):null;
 
-  // 가입 기념일 (오늘 기준 ±7일)
+  // 가입 기념일 ±7일
   const anniversaries=members.filter(m=>{
     const join=new Date(m.joinDate);
-    const thisYearAnniv=new Date(today.getFullYear(),join.getMonth(),join.getDate());
-    const diff=Math.abs(daysBetween(today,thisYearAnniv));
-    return diff<=7 && (today.getFullYear()-join.getFullYear())>=1;
+    const years=today.getFullYear()-join.getFullYear();
+    if(years<1)return false;
+    const anniv=new Date(today.getFullYear(),join.getMonth(),join.getDate());
+    return Math.abs(daysBetween(today,anniv))<=7;
   }).map(m=>{
     const join=new Date(m.joinDate);
-    const years=today.getFullYear()-join.getFullYear();
-    return{...m,years};
+    return{...m,years:today.getFullYear()-join.getFullYear()};
   });
+
+  // 연속 참석 스트릭 랭킹
+  const streakRanking=members.map(m=>{
+    const sortedBungs=[...bungs].sort((a,b)=>new Date(a.date)-new Date(b.date));
+    let maxStreak=0,curStreak=0;
+    sortedBungs.forEach(b=>{
+      if(b.attendees.includes(m.id)){curStreak++;if(curStreak>maxStreak)maxStreak=curStreak;}
+      else curStreak=0;
+    });
+    return{...m,maxStreak};
+  }).filter(m=>m.maxStreak>0).sort((a,b)=>b.maxStreak-a.maxStreak).slice(0,5);
+
+  // 벙주 많이 한 랭킹
+  const hostRanking=members.map(m=>{
+    const hosted=bungs.filter(b=>b.hostId===m.id);
+    const jeongmoHosted=hosted.filter(b=>b.type==='정모');
+    return{...m,hosted:hosted.length,jeongmoHosted:jeongmoHosted.length};
+  }).filter(m=>m.hosted>0).sort((a,b)=>b.hosted-a.hosted).slice(0,5);
+
+  // 월별 MVP 히스토리 (최근 6개월)
+  const monthMVPs=[];
+  for(let i=0;i<6;i++){
+    const d=new Date(today.getFullYear(),today.getMonth()-i,1);
+    const ym=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const monthBungs=bungs.filter(b=>b.date.startsWith(ym));
+    if(monthBungs.length===0)continue;
+    const ac={};
+    monthBungs.forEach(b=>b.attendees.forEach(id=>{ac[id]=(ac[id]||0)+1;}));
+    const topId=Object.keys(ac).sort((a,b)=>ac[b]-ac[a])[0];
+    const mvp=topId?members.find(x=>x.id===parseInt(topId)):null;
+    if(mvp)monthMVPs.push({ym:`${d.getFullYear()}년 ${d.getMonth()+1}월`,name:mvp.name,count:ac[topId],total:monthBungs.length});
+  }
 
   let html=`
   <!-- 이달의 벙주 -->
-  <div class="hall-card mb-2">
+  <div class="hall-card">
     <h3>👑 이달의 벙주 (${today.getMonth()+1}월)</h3>
-    ${topHost?`
-    <div style="display:flex;align-items:center;gap:16px;padding:12px 0">
-      <div style="font-size:48px">👑</div>
+    ${topHost?`<div style="display:flex;align-items:center;gap:16px;padding:8px 0">
+      <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--warn-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:500;flex-shrink:0">${topHost.name[0]}</div>
       <div>
-        <div style="font-size:20px;font-weight:500">${topHost.name}</div>
-        <div style="font-size:13px;color:var(--text2);margin-top:4px">이번 달 ${hostCount[topHostId]}회 벙주 담당</div>
+        <div style="font-size:18px;font-weight:500">${topHost.name}</div>
+        <div style="font-size:13px;color:var(--text2);margin-top:3px">이번 달 ${hostCount[topHostId]}회 벙주 담당</div>
       </div>
+      <div style="margin-left:auto;font-size:36px">👑</div>
     </div>`:`<div style="font-size:13px;color:var(--text2);padding:8px 0">이번 달 벙주 기록이 없습니다.</div>`}
   </div>
 
   <!-- 가입 기념일 -->
-  ${anniversaries.length>0?`
-  <div class="hall-card mb-2">
+  ${anniversaries.length>0?`<div class="hall-card">
     <h3>🎂 이번 주 가입 기념일</h3>
-    <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
-      ${anniversaries.map(m=>`
-      <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:0.5px solid var(--border)">
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${anniversaries.map(m=>`<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:0.5px solid var(--border)">
         <span style="font-size:24px">🎉</span>
-        <div>
-          <strong>${m.name}</strong><span class="anniversary-badge">${m.years}주년</span>
-          <div style="font-size:12px;color:var(--text2);margin-top:2px">가입일: ${formatDate(m.joinDate)}</div>
-        </div>
+        <div><strong>${m.name}</strong><span class="anniversary-badge">${m.years}주년</span>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">가입일: ${formatDate(m.joinDate)}</div></div>
       </div>`).join('')}
     </div>
   </div>`:''}
 
-  <!-- 개인 업적 섹션 -->
-  <div class="hall-card mb-2">
-    <h3>🏅 개인 업적</h3>
+  <!-- 역대 참여율 TOP 3 -->
+  <div class="hall-card">
+    <h3>🏆 역대 참여율 명예의 전당</h3>
+    ${bungs.length===0?'<div style="font-size:13px;color:var(--text2)">벙 데이터가 없습니다.</div>':
+    `<div style="display:flex;flex-direction:column;gap:10px">
+      ${top3.map((s,i)=>`<div style="display:flex;align-items:center;gap:14px;background:var(--bg3);border-radius:var(--radius-lg);padding:12px 14px">
+        <div style="font-size:28px">${medals[i]}</div>
+        <div style="flex:1">
+          <div style="font-weight:500">${s.name} <span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${s.grade.bg};color:${s.grade.color};font-weight:500">${s.grade.label}</span></div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px">${s.attended}회 / 전체 ${bungs.length}회</div>
+          <div style="background:var(--bg);border-radius:4px;height:5px;overflow:hidden;margin-top:6px"><div style="width:${s.rate}%;background:${s.grade.color};height:100%;border-radius:4px"></div></div>
+        </div>
+        <div style="font-size:22px;font-weight:500;color:${s.grade.color}">${s.rate}%</div>
+      </div>`).join('')}
+    </div>`}
+  </div>
+
+  <!-- 연속 참석 스트릭 랭킹 -->
+  <div class="hall-card">
+    <h3>🔥 연속 참석 스트릭 랭킹</h3>
+    ${streakRanking.length===0?'<div style="font-size:13px;color:var(--text2)">데이터가 없습니다.</div>':
+    `<div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
+      <table><thead><tr><th>순위</th><th>이름</th><th>최장 연속</th><th>그래프</th></tr></thead><tbody>
+      ${streakRanking.map((m,i)=>`<tr>
+        <td style="color:var(--text2)">${i+1}</td>
+        <td><strong>${m.name}</strong></td>
+        <td style="color:var(--warn);font-weight:500">${m.maxStreak}회</td>
+        <td style="min-width:80px"><div style="background:var(--bg3);border-radius:4px;height:7px;overflow:hidden"><div style="width:${Math.round(m.maxStreak/streakRanking[0].maxStreak*100)}%;background:var(--warn);height:100%;border-radius:4px"></div></div></td>
+      </tr>`).join('')}
+      </tbody></table>
+    </div>`}
+  </div>
+
+  <!-- 벙주 랭킹 -->
+  <div class="hall-card">
+    <h3>🎙️ 벙주 랭킹</h3>
+    ${hostRanking.length===0?'<div style="font-size:13px;color:var(--text2)">벙주 기록이 없습니다.</div>':
+    `<div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
+      <table><thead><tr><th>순위</th><th>이름</th><th>전체</th><th>정모</th></tr></thead><tbody>
+      ${hostRanking.map((m,i)=>`<tr>
+        <td>${i===0?'👑':i===1?'🥈':i===2?'🥉':i+1}</td>
+        <td><strong>${m.name}</strong></td>
+        <td style="font-weight:500">${m.hosted}회</td>
+        <td style="color:var(--info)">${m.jeongmoHosted}회</td>
+      </tr>`).join('')}
+      </tbody></table>
+    </div>`}
+  </div>
+
+  <!-- 월별 MVP 히스토리 -->
+  <div class="hall-card">
+    <h3>📅 월별 MVP 히스토리</h3>
+    ${monthMVPs.length===0?'<div style="font-size:13px;color:var(--text2)">데이터가 없습니다.</div>':
+    `<div style="display:flex;flex-direction:column;gap:8px">
+      ${monthMVPs.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:0.5px solid var(--border)">
+        <div style="font-size:12px;color:var(--text2);min-width:80px">${m.ym}</div>
+        <div style="flex:1;padding:0 12px"><strong>${m.name}</strong></div>
+        <div style="font-size:12px;color:var(--text2)">${m.count}/${m.total}회</div>
+      </div>`).join('')}
+    </div>`}
+  </div>
+
+  <!-- 개인 업적 -->
+  <div class="hall-card">
+    <h3>🏅 개인 업적 현황</h3>
     ${members.length===0?'<div style="font-size:13px;color:var(--text2)">회원 데이터가 없습니다.</div>':
-    '<div style="display:flex;flex-direction:column;gap:10px">'+
+    '<div style="display:flex;flex-direction:column;gap:4px">'+
     members.map(m=>{
       const achvs=getAchievements(m);
       const unlocked=achvs.filter(a=>a.unlocked);
       if(unlocked.length===0)return '';
       return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border)">
         <div style="font-size:13px;font-weight:500;min-width:60px">${m.name}</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;flex:1">
-          ${achvs.map(a=>`<span title="${a.label}: ${a.desc}" style="font-size:18px;${a.unlocked?'':'opacity:0.25;filter:grayscale(1)'}">${a.icon}</span>`).join('')}
+        <div style="display:flex;gap:5px;flex-wrap:wrap;flex:1">
+          ${achvs.map(a=>`<span title="${a.label}: ${a.desc}" style="font-size:17px;${a.unlocked?'':'opacity:0.2;filter:grayscale(1)'}">${a.icon}</span>`).join('')}
         </div>
         <div style="font-size:11px;color:var(--text2);flex-shrink:0">${unlocked.length}/${achvs.length}</div>
       </div>`;
     }).join('')+
     '</div>'}
+  </div>`;
+
+  el.innerHTML=html;
+}
+
+// ── 캘린더 ───────────────────────────────────────────────────────
+let calYear=TODAY.getFullYear(), calMonth=TODAY.getMonth();
+
+function renderCalendar(){
+  const el=document.getElementById('calendar-content');
+  if(!el)return;
+  const y=calYear, m=calMonth;
+  const firstDay=new Date(y,m,1).getDay();
+  const daysInMonth=new Date(y,m+1,0).getDate();
+  const daysInPrev=new Date(y,m,0).getDate();
+  const weekdays=['일','월','화','수','목','금','토'];
+
+  // 이달 벙 목록
+  const ym=`${y}-${String(m+1).padStart(2,'0')}`;
+  const monthBungs=bungs.filter(b=>b.date.startsWith(ym));
+
+  let html=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+    <button class="btn btn-sm" onclick="calNav(-1)"><i class="ti ti-chevron-left"></i></button>
+    <div style="font-size:16px;font-weight:500">${y}년 ${m+1}월</div>
+    <button class="btn btn-sm" onclick="calNav(1)"><i class="ti ti-chevron-right"></i></button>
+  </div>
+  <div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem;margin-bottom:1rem">
+    <div class="cal-grid" style="margin-bottom:4px">
+      ${weekdays.map(d=>`<div class="cal-header">${d}</div>`).join('')}
+    </div>
+    <div class="cal-grid">`;
+
+  // 이전 달
+  for(let i=firstDay-1;i>=0;i--){
+    html+=`<div class="cal-day other-month"><div class="cal-day-num">${daysInPrev-i}</div></div>`;
+  }
+  // 이번 달
+  for(let d=1;d<=daysInMonth;d++){
+    const dateStr=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const isToday=TODAY.getFullYear()===y&&TODAY.getMonth()===m&&TODAY.getDate()===d;
+    const dayBungs=bungs.filter(b=>b.date===dateStr);
+    html+=`<div class="cal-day${isToday?' today':''}">
+      <div class="cal-day-num">${d}</div>
+      ${dayBungs.map(b=>`<div class="cal-event ${b.type==='번개'?'bungae':'jeongmo'}" onclick="showCalBungDetail(${b.id})" title="${b.name}">${b.name}</div>`).join('')}
+    </div>`;
+  }
+  // 다음 달
+  const remaining=(7-((firstDay+daysInMonth)%7))%7;
+  for(let d=1;d<=remaining;d++){
+    html+=`<div class="cal-day other-month"><div class="cal-day-num">${d}</div></div>`;
+  }
+
+  html+=`</div></div>`;
+
+  // 이달 벙 목록
+  if(monthBungs.length>0){
+    html+=`<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
+      <div style="font-size:13px;font-weight:500;margin-bottom:10px">${m+1}월 벙 목록</div>
+      ${monthBungs.sort((a,b)=>new Date(a.date)-new Date(b.date)).map(b=>{
+        const host=b.hostId?members.find(x=>x.id===b.hostId):null;
+        const isPast=new Date(b.date)<=TODAY;
+        const typeBadge=b.type==='번개'?'<span class="badge badge-bungae">번개</span>':'<span class="badge badge-jeongmo">정모</span>';
+        return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:0.5px solid var(--border)">
+          ${typeBadge}
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:500">${b.name}</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:2px">${formatDate(b.date)}${b.place?` · ${b.place}`:''}${host?` · 벙주: ${host.name}`:''}</div>
+          </div>
+          <div style="font-size:12px;color:var(--text2)">${isPast?b.attendees.length+'명':'예정'}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+
+  el.innerHTML=html;
+}
+
+function calNav(dir){
+  calMonth+=dir;
+  if(calMonth>11){calMonth=0;calYear++;}
+  if(calMonth<0){calMonth=11;calYear--;}
+  renderCalendar();
+}
+
+function showCalBungDetail(id){
+  const b=bungs.find(x=>x.id===id);
+  if(!b)return;
+  const host=b.hostId?members.find(x=>x.id===b.hostId):null;
+  const names=b.attendees.map(id=>{const m=members.find(x=>x.id===id);return m?m.name:'?'});
+  openModal(`<div class="modal-title">${b.name}</div>
+    <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;margin-bottom:16px">
+      <div class="flex"><i class="ti ti-calendar" style="color:var(--info)"></i>${formatDate(b.date)}</div>
+      ${b.place?`<div class="flex"><i class="ti ti-map-pin" style="color:var(--danger)"></i>${b.place}</div>`:''}
+      ${b.time?`<div class="flex"><i class="ti ti-clock" style="color:var(--success)"></i>${b.time}</div>`:''}
+      ${host?`<div class="flex"><i class="ti ti-crown" style="color:var(--warn)"></i>${host.name}</div>`:''}
+      <div class="flex"><i class="ti ti-users" style="color:var(--purple)"></i>${names.join(', ')||'없음'} (${names.length}명)</div>
+      ${b.memo?`<div class="flex"><i class="ti ti-notes" style="color:var(--text2)"></i>${b.memo}</div>`:''}
+    </div>
+    <div class="flex" style="justify-content:flex-end"><button class="btn btn-primary" onclick="closeModal()">닫기</button></div>`);
+}
+
+// ── 회원 프로필 ───────────────────────────────────────────────────
+let selectedMemberId=null;
+
+function renderProfileList(){
+  const el=document.getElementById('profile-content');
+  if(!el)return;
+  if(selectedMemberId){
+    renderMemberProfile(selectedMemberId);
+    return;
+  }
+  if(members.length===0){
+    el.innerHTML='<div class="empty-state"><i class="ti ti-users"></i>등록된 회원이 없습니다.</div>';
+    return;
+  }
+  const sorted=[...members].sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+  let html=`<div style="margin-bottom:12px">
+    <input type="text" placeholder="회원 검색..." oninput="filterProfileList(this.value)" style="width:100%;max-width:300px">
+  </div>
+  <div id="profile-list-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">
+    ${sorted.map(m=>{
+      const attended=bungs.filter(b=>b.attendees.includes(m.id)).length;
+      const rate=bungs.length>0?Math.round(attended/bungs.length*100):0;
+      const grade=getMemberGrade(rate);
+      const achvCount=getAchievements(m).filter(a=>a.unlocked).length;
+      return `<div onclick="openProfile(${m.id})" style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem;cursor:pointer;transition:border-color 0.15s" onmouseover="this.style.borderColor='var(--text2)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:500;margin-bottom:8px">${m.name[0]}</div>
+        <div style="font-size:13px;font-weight:500;margin-bottom:4px">${m.name}</div>
+        <div style="font-size:11px;padding:2px 6px;border-radius:var(--radius);background:${grade.bg};color:${grade.color};font-weight:500;display:inline-block;margin-bottom:6px">${grade.label}</div>
+        <div style="font-size:11px;color:var(--text2)">${rate}% · 업적 ${achvCount}개</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+  el.innerHTML=html;
+}
+
+function filterProfileList(q){
+  document.querySelectorAll('#profile-list-grid > div').forEach(card=>{
+    const name=card.querySelector('div[style*="font-weight:500"]')?.textContent||'';
+    card.style.display=name.includes(q)?'':'none';
+  });
+}
+
+function openProfile(id){
+  selectedMemberId=id;
+  renderMemberProfile(id);
+}
+
+function renderMemberProfile(id){
+  const m=members.find(x=>x.id===id);
+  if(!m)return;
+  const el=document.getElementById('profile-content');
+  if(!el)return;
+
+  const attended=bungs.filter(b=>b.attendees.includes(m.id));
+  const rate=bungs.length>0?Math.round(attended.length/bungs.length*100):0;
+  const grade=getMemberGrade(rate);
+  const hosted=bungs.filter(b=>b.hostId===m.id);
+  const achvs=getAchievements(m);
+  const unlocked=achvs.filter(a=>a.unlocked);
+  const joinDate=new Date(m.joinDate);
+  const daysSinceJoin=daysBetween(joinDate,TODAY);
+
+  // 연속 참석 계산
+  const sortedBungs=[...bungs].sort((a,b)=>new Date(a.date)-new Date(b.date));
+  let maxStreak=0,curStreak=0;
+  sortedBungs.forEach(b=>{
+    if(b.attendees.includes(m.id)){curStreak++;if(curStreak>maxStreak)maxStreak=curStreak;}
+    else curStreak=0;
+  });
+
+  // 월별 참석 (최근 6개월)
+  const monthlyData=[];
+  for(let i=5;i>=0;i--){
+    const d=new Date(TODAY.getFullYear(),TODAY.getMonth()-i,1);
+    const ym=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const monthBungs=bungs.filter(b=>b.date.startsWith(ym));
+    const monthAttend=monthBungs.filter(b=>b.attendees.includes(m.id));
+    monthlyData.push({label:`${d.getMonth()+1}월`,total:monthBungs.length,attend:monthAttend.length});
+  }
+  const maxMonthly=Math.max(...monthlyData.map(d=>d.total),1);
+
+  const attendedBungs=[...attended].sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+  let html=`
+  <div style="margin-bottom:12px">
+    <button class="btn btn-sm" onclick="selectedMemberId=null;renderProfileList()"><i class="ti ti-arrow-left"></i> 목록으로</button>
   </div>
 
-  <!-- 역대 TOP 3 -->
-  <div class="hall-card">
-    <h3>🏆 역대 참여율 명예의 전당</h3>
-    ${bungs.length===0?'<div style="font-size:13px;color:var(--text2)">벙 데이터가 없습니다.</div>':
-    `<div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">
-      ${top3.map((s,i)=>`
-      <div style="display:flex;align-items:center;gap:16px;background:var(--bg3);border-radius:var(--radius-lg);padding:12px 16px">
-        <div style="font-size:32px">${medals[i]}</div>
-        <div style="flex:1">
-          <div style="font-weight:500;font-size:15px">${s.name}</div>
-          <div style="font-size:12px;color:var(--text2);margin-top:2px">${s.attended}회 참석 / 전체 ${bungs.length}회</div>
-          <div style="background:var(--bg);border-radius:4px;height:6px;overflow:hidden;margin-top:6px"><div style="width:${s.rate}%;background:${s.grade.color};height:100%;border-radius:4px"></div></div>
+  <div class="profile-card">
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+      <div class="profile-avatar">${m.name[0]}</div>
+      <div>
+        <div style="font-size:20px;font-weight:500">${m.name}</div>
+        <div style="margin-top:4px"><span style="font-size:12px;padding:3px 10px;border-radius:20px;background:${grade.bg};color:${grade.color};font-weight:500">${grade.label}</span></div>
+        ${m.memo?`<div style="font-size:12px;color:var(--text2);margin-top:6px">📝 ${m.memo}</div>`:''}
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+      <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center">
+        <div style="font-size:20px;font-weight:500;color:var(--info)">${rate}%</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">참여율</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center">
+        <div style="font-size:20px;font-weight:500">${attended.length}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">참석 벙</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center">
+        <div style="font-size:20px;font-weight:500;color:var(--warn)">${maxStreak}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">최장 연속</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center">
+        <div style="font-size:20px;font-weight:500;color:var(--purple)">${hosted.length}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">벙주 횟수</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;margin-top:10px;font-size:12px;color:var(--text2)">
+      <span><i class="ti ti-calendar" style="vertical-align:-1px"></i> 가입: ${formatDate(m.joinDate)}</span>
+      <span><i class="ti ti-clock" style="vertical-align:-1px"></i> ${daysSinceJoin}일째 활동 중</span>
+    </div>
+  </div>
+
+  <div class="profile-card">
+    <div style="font-size:13px;font-weight:500;margin-bottom:12px">월별 참석 현황</div>
+    <div style="display:flex;align-items:flex-end;gap:6px;height:80px;margin-bottom:6px">
+      ${monthlyData.map(d=>{
+        const h=d.total>0?Math.round(d.attend/d.total*100):0;
+        const barH=d.total>0?Math.round(d.total/maxMonthly*60):0;
+        const attendH=d.total>0?Math.round(d.attend/d.total*barH):0;
+        return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">
+          <div style="font-size:10px;color:var(--info);font-weight:500">${d.attend>0?d.attend:''}</div>
+          <div style="width:100%;display:flex;flex-direction:column;justify-content:flex-end;height:60px">
+            <div style="width:100%;background:var(--info);border-radius:3px 3px 0 0;height:${attendH}px"></div>
+            <div style="width:100%;background:var(--bg3);height:${barH-attendH}px"></div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;gap:6px">
+      ${monthlyData.map(d=>`<div style="flex:1;text-align:center;font-size:10px;color:var(--text2)">${d.label}</div>`).join('')}
+    </div>
+  </div>
+
+  <div class="profile-card">
+    <div style="font-size:13px;font-weight:500;margin-bottom:10px">업적 (${unlocked.length}/${achvs.length})</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      ${achvs.map(a=>`<div style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:var(--radius);background:${a.unlocked?'var(--warn-bg)':'var(--bg2)'};border:0.5px solid ${a.unlocked?'var(--warn-border)':'var(--border)'};${a.unlocked?'':'opacity:0.5'}">
+        <span style="font-size:18px">${a.icon}</span>
+        <div>
+          <div style="font-size:12px;font-weight:500;color:${a.unlocked?'var(--warn)':'var(--text2)'}">${a.label}</div>
+          <div style="font-size:11px;color:var(--text2)">${a.desc}</div>
         </div>
-        <div style="font-size:24px;font-weight:500;color:${s.grade.color}">${s.rate}%</div>
       </div>`).join('')}
+    </div>
+  </div>
+
+  <div class="profile-card">
+    <div style="font-size:13px;font-weight:500;margin-bottom:10px">참석 벙 목록 (${attended.length}개)</div>
+    ${attendedBungs.length===0?`<div style="font-size:13px;color:var(--text2)">참석한 벙이 없습니다.</div>`:
+    `<div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
+      <table><thead><tr><th>날짜</th><th>벙 이름</th><th>구분</th><th>장소</th></tr></thead><tbody>
+        ${attendedBungs.slice(0,20).map(b=>`<tr>
+          <td style="color:var(--text2)">${formatDate(b.date)}</td>
+          <td><strong>${b.name}</strong></td>
+          <td>${b.type==='번개'?'<span class="badge badge-bungae">번개</span>':'<span class="badge badge-jeongmo">정모</span>'}</td>
+          <td style="color:var(--text2)">${b.place||'-'}</td>
+        </tr>`).join('')}
+      </tbody></table>
     </div>`}
   </div>`;
 
   el.innerHTML=html;
 }
 
-// ── 업데이트 내역 ─────────────────────────────────────────────────
 const UPDATES=[
+  {version:'v1.7',date:'2026.06.17',items:['캘린더 탭 추가 — 월별 달력으로 벙 일정 시각화, 벙 클릭 시 상세 팝업','회원 프로필 탭 추가 — 회원 카드 그리드, 개인 상세 페이지 (참여율/연속참석/벙주/업적/참석벙 목록/월별 그래프)']},
+  {version:'v1.6',date:'2026.06.17',items:['명예의 전당 대폭 강화 — 연속 참석 스트릭 랭킹, 벙주 랭킹, 월별 MVP 히스토리 추가','이달의 벙주 카드 아바타 디자인 개선']},
+  {version:'v1.5',date:'2026.06.17',items:['대시보드 오른쪽 하단 패널 추가 — 이달의 MVP, 신규 회원, 다가오는 기념일, 업적 현황 피드']},
   {version:'v1.4',date:'2026.06.16',items:['대시보드 전면 리디자인 — 히어로 배너(음파 SVG), 타임라인 최근 벙, 업적 카드','업적 시스템 추가 — 개인 7종 + 소모임 4종','명예의 전당에 개인 업적 현황 추가','사이드바 레이아웃 전환 (모바일 하단 탭바)','벙 추가 시 벙주 버그 수정','회원 명단 정렬 기능 추가 (이름순/가입일순/참여율순)']},
   {version:'v1.3',date:'2026.06.15',items:['갤러리 탭 추가 — 사진 업로드/삭제/라이트박스','명예의 전당 탭 추가 — 역대 TOP 3, 이달의 벙주, 가입 기념일','회원 검색 기능 추가','다크모드/라이트모드 수동 토글 추가','업데이트 내역 탭 추가']},
   {version:'v1.2',date:'2026.06.15',items:['통계 탭 추가 — 참여율 랭킹, 등급 시스템','리포트 탭 추가 — 월별/분기별 현황','벙 공지 템플릿 생성 기능','벙주 지정, 장소, 시간, 주제 입력 추가','유령 퇴출 메시지 자동 생성','회원 메모 기능 추가','정모/번개 구분 추가','파비콘 🎤 마이크 이모지 적용']},
@@ -1417,10 +1871,12 @@ function renderAll(){
 }
 
 function switchTab(tab){
-  document.querySelectorAll('.nav-item').forEach((t,i)=>t.classList.toggle('active',['dashboard','members','bung','ghost','stats','report','hall','gallery','updates'][i]===tab));
+  document.querySelectorAll('.nav-item').forEach((t,i)=>t.classList.toggle('active',['dashboard','members','bung','ghost','stats','report','hall','gallery','updates','calendar','profile'][i]===tab));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+tab).classList.add('active');
   if(tab==='gallery')loadGallery();
+  if(tab==='calendar')renderCalendar();
+  if(tab==='profile')renderProfileList();
 }
 
 function toggleContact(id,val){const m=members.find(x=>x.id===id);if(m){m.contacted=val;renderAll();}}
