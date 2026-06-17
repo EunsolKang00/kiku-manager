@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KIKU 회원 관리</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎤</text></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#fff;--bg2:#f7f7f5;--bg3:#f0efe9;--text:#1a1a1a;--text2:#6b6b6b;--text3:#9a9a9a;--border:rgba(0,0,0,0.1);--border2:rgba(0,0,0,0.18);--radius:8px;--radius-lg:12px;--danger-bg:#FCEBEB;--danger:#A32D2D;--danger-border:#F09595;--warn-bg:#FAEEDA;--warn:#854F0B;--warn-border:#EF9F27;--info-bg:#E6F1FB;--info:#185FA5;--info-border:#85B7EB;--success-bg:#EAF3DE;--success:#3B6D11;--success-border:#97C459;--purple-bg:#EEEDFE;--purple:#534AB7}
+:root[data-theme='dark']{--bg:#1c1c1a;--bg2:#242422;--bg3:#2a2a28;--text:#f0efe9;--text2:#9a9a90;--text3:#6b6b65;--border:rgba(255,255,255,0.1);--border2:rgba(255,255,255,0.18);--danger-bg:#3a1a1a;--danger:#F09595;--danger-border:#791F1F;--warn-bg:#3a2e10;--warn:#FAC775;--warn-border:#633806;--info-bg:#0e1e36;--info:#85B7EB;--info-border:#0C447C;--success-bg:#162310;--success:#97C459;--success-border:#27500A;--purple-bg:#1e1c3a;--purple:#AFA9EC}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:var(--text);background:var(--bg3);min-height:100vh}
+.login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem}
+.login-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:2.5rem 2rem;width:100%;max-width:380px;text-align:center}
+.login-logo{font-size:48px;margin-bottom:1rem}
+.login-title{font-size:24px;font-weight:500;margin-bottom:8px}
+.login-sub{font-size:13px;color:var(--text2);margin-bottom:2rem;line-height:1.6}
+.btn-google{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:11px;border:0.5px solid var(--border2);border-radius:var(--radius);background:none;cursor:pointer;font-size:14px;color:var(--text)}
+.btn-google:hover{background:var(--bg2)}
+.layout{display:flex;min-height:100vh}
+.sidebar{width:210px;flex-shrink:0;background:var(--bg);border-right:0.5px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:50;overflow-y:auto}
+.sidebar-header{padding:1.25rem 1rem 1rem;border-bottom:0.5px solid var(--border)}
+.sidebar-logo{font-size:16px;font-weight:500;display:flex;align-items:center;gap:8px}
+.sidebar-logo span{font-size:20px}
+.sidebar-user{font-size:11px;color:var(--text2);margin-top:4px;display:flex;align-items:center;gap:5px}
+.sidebar-nav{padding:8px 0;flex:1}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;font-size:13px;color:var(--text2);border:none;background:none;width:100%;text-align:left}
+.nav-item:hover{background:var(--bg2);color:var(--text)}
+.nav-item.active{background:var(--bg2);color:var(--text);font-weight:500;border-left:2px solid var(--text)}
+.nav-item i{font-size:16px;flex-shrink:0}
+.nav-item .badge-dot{width:6px;height:6px;border-radius:50%;background:var(--danger);margin-left:auto}
+.nav-divider{height:0.5px;background:var(--border);margin:6px 12px}
+.main{margin-left:210px;flex:1;min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--bg);border-bottom:0.5px solid var(--border);padding:10px 1.25rem;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;position:sticky;top:0;z-index:40}
+.main-content{padding:1.25rem;flex:1}
+.section{display:none}.section.active{display:block}
+.btn{padding:6px 14px;border:0.5px solid var(--border2);border-radius:var(--radius);background:none;cursor:pointer;font-size:13px;color:var(--text)}
+.btn:hover{background:var(--bg2)}
+.btn-primary{background:var(--text);color:var(--bg);border-color:var(--text)}
+.btn-primary:hover{opacity:0.85}
+.btn-danger{color:var(--danger);border-color:var(--danger-border)}
+.btn-danger:hover{background:var(--danger-bg)}
+.btn-success{color:var(--success);border-color:var(--success-border)}
+.btn-success:hover{background:var(--success-bg)}
+.btn-warn{color:var(--warn);border-color:var(--warn-border)}
+.btn-warn:hover{background:var(--warn-bg)}
+.btn-info{color:var(--info);border-color:var(--info-border)}
+.btn-info:hover{background:var(--info-bg)}
+.btn-sm{padding:3px 10px;font-size:12px}
+.btn i{font-size:14px;vertical-align:-2px;margin-right:3px}
+.card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:1rem}
+.metric{background:var(--bg2);border-radius:var(--radius);padding:1rem;text-align:center}
+.metric-label{font-size:11px;color:var(--text2);margin-bottom:4px}
+.metric-value{font-size:22px;font-weight:500}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:var(--radius);font-weight:500}
+.badge-ghost{background:var(--danger-bg);color:var(--danger)}
+.badge-safe{background:var(--success-bg);color:var(--success)}
+.badge-new{background:var(--info-bg);color:var(--info)}
+.badge-contact{background:var(--purple-bg);color:var(--purple)}
+.badge-jeongmo{background:var(--info-bg);color:var(--info)}
+.badge-bungae{background:var(--warn-bg);color:var(--warn)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 10px;font-weight:500;color:var(--text2);border-bottom:0.5px solid var(--border);font-size:12px}
+td{padding:8px 10px;border-bottom:0.5px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--bg2)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.form-group{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.form-group label{font-size:12px;color:var(--text2);font-weight:500}
+input[type=text],input[type=date],input[type=search],select,textarea{width:100%;padding:7px 10px;border:0.5px solid var(--border2);border-radius:var(--radius);font-size:13px;background:var(--bg);color:var(--text);font-family:inherit}
+textarea{resize:vertical;min-height:80px;line-height:1.6}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--text)}
+.alert{padding:11px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:1rem;display:flex;align-items:flex-start;gap:8px;line-height:1.5}
+.alert i{font-size:16px;flex-shrink:0;margin-top:1px}
+.alert-danger{background:var(--danger-bg);color:var(--danger);border:0.5px solid var(--danger-border)}
+.alert-warning{background:var(--warn-bg);color:var(--warn);border:0.5px solid var(--warn-border)}
+.alert-info{background:var(--info-bg);color:var(--info);border:0.5px solid var(--info-border)}
+.alert-success{background:var(--success-bg);color:var(--success);border:0.5px solid var(--success-border)}
+.flex{display:flex;align-items:center;gap:8px}
+.flex-between{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.mb-1{margin-bottom:8px}.mb-2{margin-bottom:16px}
+.text-secondary{color:var(--text2)}
+.text-sm{font-size:12px}
+.empty-state{padding:2.5rem;text-align:center;color:var(--text2);font-size:13px}
+.empty-state i{font-size:36px;display:block;margin-bottom:8px;opacity:0.35}
+.member-row-ghost td{background:var(--danger-bg)!important}
+.contact-check{width:14px;height:14px;cursor:pointer;accent-color:var(--purple)}
+.modal-backdrop{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);z-index:200;align-items:center;justify-content:center;padding:1rem}
+.modal-backdrop.open{display:flex}
+.modal{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;width:100%;max-width:500px;max-height:90vh;overflow-y:auto}
+.modal-title{font-size:15px;font-weight:500;margin-bottom:1rem}
+h3{font-size:15px;font-weight:500;margin-bottom:10px}
+.section-label{font-size:11px;font-weight:500;color:var(--text2);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px}
+.attendee-scroll{max-height:150px;overflow-y:auto;border:0.5px solid var(--border2);border-radius:var(--radius);padding:8px}
+.attendee-label{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:13px}
+.attendee-tag{display:inline-flex;align-items:center;background:var(--purple-bg);color:var(--purple);font-size:12px;padding:3px 10px;border-radius:var(--radius);font-weight:500}
+.drive-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.drive-dot.connected{background:var(--success)}
+.drive-dot.disconnected{background:var(--text3)}
+.drive-dot.loading{background:var(--warn);animation:pulse 1s infinite}
+.memo-text{font-size:12px;color:var(--text2);font-style:italic;margin-top:2px}
+.template-box{background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius);padding:12px;font-size:13px;line-height:1.8;white-space:pre-wrap;word-break:break-all;margin-bottom:8px}
+.hall-card{background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:1rem}
+.update-item{border-left:3px solid var(--info);padding:10px 16px;margin-bottom:12px;background:var(--bg2);border-radius:0 var(--radius) var(--radius) 0}
+.update-version{font-weight:500;font-size:13px;color:var(--info)}
+.update-date{font-size:11px;color:var(--text2);margin-bottom:6px}
+.anniversary-badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:var(--radius);background:var(--warn-bg);color:var(--warn);font-weight:500;margin-left:6px}
+.hero-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.75rem 1.5rem;position:relative;overflow:hidden}
+.hero-wave{position:absolute;top:0;right:0;bottom:0;opacity:0.06;pointer-events:none}
+.hero-dday{font-size:56px;font-weight:500;line-height:1;color:var(--info)}
+.stat-card-big{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;position:relative;overflow:hidden}
+.stat-card-icon{position:absolute;right:12px;bottom:8px;font-size:52px;opacity:0.07;line-height:1}
+.achievement-badge{display:inline-flex;align-items:center;gap:6px;background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:8px 12px;font-size:12px}
+.achievement-badge.unlocked{background:var(--warn-bg);border-color:var(--warn-border);color:var(--warn)}
+.avatar{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--purple-bg);color:var(--purple);font-size:11px;font-weight:500;flex-shrink:0;border:1.5px solid var(--bg)}
+.timeline-item{display:flex;gap:12px;padding:12px 0;border-bottom:0.5px solid var(--border)}
+.timeline-dot{width:8px;height:8px;border-radius:50%;background:var(--info);flex-shrink:0;margin-top:5px}
+.timeline-line{width:1px;background:var(--border);flex-shrink:0;margin:0 3.5px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.cal-header{text-align:center;font-size:11px;color:var(--text2);font-weight:500;padding:6px 0}
+.cal-day{min-height:72px;border-radius:var(--radius);padding:4px;background:var(--bg2);font-size:12px}
+.cal-day.today{border:1.5px solid var(--info)}
+.cal-day.other-month{opacity:0.35}
+.cal-day-num{font-size:11px;color:var(--text2);margin-bottom:3px;font-weight:500}
+.cal-day.today .cal-day-num{color:var(--info)}
+.cal-event{font-size:10px;padding:2px 5px;border-radius:3px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.cal-event.jeongmo{background:var(--info-bg);color:var(--info)}
+.cal-event.bungae{background:var(--warn-bg);color:var(--warn)}
+.profile-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:1rem}
+.profile-avatar{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:500;flex-shrink:0}
+.notice-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:10px;cursor:pointer}
+.notice-card:hover{border-color:var(--text2)}
+.notice-pinned{border-left:3px solid var(--warn)}
+.notice-tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:var(--radius);font-weight:500;margin-right:6px}
+.notice-tag.important{background:var(--danger-bg);color:var(--danger)}
+.notice-tag.normal{background:var(--info-bg);color:var(--info)}
+.notice-tag.pinned{background:var(--warn-bg);color:var(--warn)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+@media(max-width:640px){
+  .sidebar{width:100%;height:auto;position:fixed;bottom:0;top:auto;border-right:none;border-top:0.5px solid var(--border);flex-direction:row;overflow-x:auto;z-index:50}
+  .sidebar-header{display:none}
+  .sidebar-nav{display:flex;flex-direction:row;padding:0;overflow-x:auto;flex:1}
+  .nav-item{flex-direction:column;gap:2px;padding:7px 10px;font-size:10px;white-space:nowrap;border-left:none!important;border-top:2px solid transparent;min-width:60px;justify-content:center;align-items:center}
+  .nav-item.active{border-top:2px solid var(--text);border-left:none!important}
+  .nav-item i{font-size:18px}
+  .nav-divider{display:none}
+  .main{margin-left:0;padding-bottom:72px}
+  .form-row{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div id="login-screen" class="login-screen" style="display:none">
+  <div class="login-card">
+    <div class="login-logo">🎤</div>
+    <div class="login-title">KIKU</div>
+    <div class="login-sub">제이팝 노래방 소모임<br>계속하려면 Google 계정으로 로그인하세요</div>
+    <button class="btn-google" onclick="signInWithGoogle()">
+      <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.48-1.6 2.04v2.01h2.6a7.8 7.8 0 002.38-5.88c0-.57-.05-.66-.15-1.18z"/><path fill="#34A853" d="M8.98 17c2.16 0 3.97-.72 5.3-1.94l-2.6-2a4.8 4.8 0 01-7.18-2.54H1.83v2.07A8 8 0 008.98 17z"/><path fill="#FBBC05" d="M4.5 10.52a4.8 4.8 0 010-3.04V5.41H1.83a8 8 0 000 7.18l2.67-2.07z"/><path fill="#EA4335" d="M8.98 4.18c1.17 0 2.23.4 3.06 1.2l2.3-2.3A8 8 0 001.83 5.4L4.5 7.49a4.77 4.77 0 014.48-3.31z"/></svg>
+      Google로 로그인
+    </button>
+    <div id="login-status" style="font-size:12px;color:var(--text2);margin-top:12px"></div>
+  </div>
+</div>
+
+<div id="app" class="layout" style="display:none">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo"><span>🎤</span> KIKU</div>
+      <div class="sidebar-user" id="sidebar-user"></div>
+    </div>
+    <nav class="sidebar-nav">
+      <button class="nav-item active" onclick="switchTab('dashboard')"><i class="ti ti-layout-dashboard"></i>대시보드</button>
+      <button class="nav-item" onclick="switchTab('notice')"><i class="ti ti-speakerphone"></i>공지사항<span class="badge-dot" id="notice-dot" style="display:none"></span></button>
+      <div class="nav-divider"></div>
+      <button class="nav-item" onclick="switchTab('members')"><i class="ti ti-users"></i>회원 명단</button>
+      <button class="nav-item" onclick="switchTab('bung')"><i class="ti ti-calendar-event"></i>벙 관리</button>
+      <button class="nav-item" onclick="switchTab('ghost')"><i class="ti ti-ghost"></i>유령 정리</button>
+      <div class="nav-divider"></div>
+      <button class="nav-item" onclick="switchTab('stats')"><i class="ti ti-chart-bar"></i>통계</button>
+      <button class="nav-item" onclick="switchTab('report')"><i class="ti ti-report"></i>리포트</button>
+      <button class="nav-item" onclick="switchTab('hall')"><i class="ti ti-trophy"></i>명예의 전당</button>
+      <div class="nav-divider"></div>
+      <button class="nav-item" onclick="switchTab('calendar')"><i class="ti ti-calendar-month"></i>캘린더</button>
+      <button class="nav-item" onclick="switchTab('profile')"><i class="ti ti-user-circle"></i>회원 프로필</button>
+      <button class="nav-item" onclick="switchTab('gallery')"><i class="ti ti-photo"></i>갤러리</button>
+      <div class="nav-divider"></div>
+      <button class="nav-item" onclick="switchTab('updates')"><i class="ti ti-news"></i>업데이트</button>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="flex" style="gap:6px">
+        <div class="drive-dot disconnected" id="sync-dot"></div>
+        <span style="font-size:12px;color:var(--text2)" id="sync-status">연결 중...</span>
+      </div>
+      <div class="flex" style="gap:6px;flex-wrap:wrap">
+        <button class="btn btn-sm" onclick="toggleTheme()" id="theme-btn"><i class="ti ti-moon" id="theme-icon"></i></button>
+        <button class="btn btn-sm btn-warn" onclick="exportBackup()"><i class="ti ti-download"></i> 백업</button>
+        <button class="btn btn-sm btn-danger" onclick="signOut()"><i class="ti ti-logout"></i> 로그아웃</button>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <div id="sec-dashboard" class="section active">
+        <div id="dashboard-alerts" style="margin-bottom:1rem"></div>
+        <div id="dash-hero" style="margin-bottom:12px"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div id="dash-stats-card"></div>
+          <div id="dash-ghost-card"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div id="dash-recent-bung"></div>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div id="dash-mvp"></div>
+            <div id="dash-newbies"></div>
+            <div id="dash-anniversary"></div>
+          </div>
+        </div>
+        <div style="margin-bottom:12px" id="dash-recent-achievements"></div>
+        <div id="dash-achievements"></div>
+      </div>
+
+      <div id="sec-notice" class="section">
+        <div class="flex-between mb-2">
+          <h3 style="margin-bottom:0">공지사항</h3>
+          <button class="btn btn-primary edit-only" onclick="openAddNotice()"><i class="ti ti-plus"></i>공지 작성</button>
+        </div>
+        <div id="notice-list"></div>
+      </div>
+
+      <div id="sec-members" class="section">
+        <div class="flex-between mb-2">
+          <h3 style="margin-bottom:0">전체 회원</h3>
+          <div class="flex" style="gap:8px;flex-wrap:wrap">
+            <input type="search" id="member-search-input" placeholder="검색..." style="width:120px;padding:5px 10px" oninput="filterMembers(this.value)">
+            <select id="member-sort" onchange="renderMembers()" style="padding:5px 10px;font-size:13px">
+              <option value="join">가입일순</option>
+              <option value="name">이름순</option>
+              <option value="rate">참여율순</option>
+            </select>
+            <button class="btn btn-primary edit-only" onclick="openAddMember()"><i class="ti ti-plus"></i>회원 추가</button>
+          </div>
+        </div>
+        <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
+          <table><thead><tr><th>이름</th><th>가입일</th><th>최근 참여일</th><th style="text-align:center">운영진 연락</th><th>상태</th><th>등급</th><th>메모</th><th class="edit-only"></th></tr></thead>
+          <tbody id="member-tbody"></tbody></table>
+          <div id="member-empty" class="empty-state" style="display:none"><i class="ti ti-users"></i>등록된 회원이 없습니다.</div>
+        </div>
+      </div>
+
+      <div id="sec-bung" class="section">
+        <div class="flex-between mb-2">
+          <h3 style="margin-bottom:0">벙 목록</h3>
+          <button class="btn btn-primary edit-only" onclick="openAddBung()"><i class="ti ti-plus"></i>벙 추가</button>
+        </div>
+        <div id="bung-list"></div>
+      </div>
+
+      <div id="sec-ghost" class="section">
+        <div id="ghost-alert-area"></div>
+        <div style="background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;margin-bottom:1rem">
+          <h3>유령 회원 기준</h3>
+          <div style="font-size:13px;color:var(--text2);line-height:1.9">
+            아래 <strong style="color:var(--text)">세 조건을 모두 충족</strong>하면 유령 회원입니다.<br>
+            1. 기산일 기준 <strong style="color:var(--text)">2달 이전</strong> 가입자<br>
+            2. 기산일 기준 <strong style="color:var(--text)">이전 두 달간</strong> 벙 참여 없음<br>
+            3. 기산일 이전 <strong style="color:var(--text)">운영진에게 연락 없음</strong>
+          </div>
+        </div>
+        <div class="flex-between mb-2">
+          <h3 style="margin-bottom:0">유령 판정 목록</h3>
+          <div class="flex">
+            <span class="text-sm text-secondary" id="ghost-calc-info"></span>
+            <button class="btn btn-info btn-sm edit-only" onclick="openGhostMessage()"><i class="ti ti-message"></i>퇴출 메시지</button>
+            <button class="btn btn-danger btn-sm edit-only" id="reset-btn" onclick="confirmReset()" style="display:none"><i class="ti ti-refresh"></i>초기화</button>
+          </div>
+        </div>
+        <div id="ghost-table-area"></div>
+      </div>
+
+      <div id="sec-stats" class="section"><div id="stats-content"></div></div>
+      <div id="sec-report" class="section"><div id="report-content"></div></div>
+      <div id="sec-hall" class="section"><div id="hall-content"></div></div>
+      <div id="sec-calendar" class="section"><div id="calendar-content"></div></div>
+      <div id="sec-profile" class="section"><div id="profile-content"></div></div>
+
+      <div id="sec-gallery" class="section">
+        <div class="flex-between mb-2">
+          <h3 style="margin-bottom:0">갤러리</h3>
+          <label class="btn btn-primary edit-only" style="cursor:pointer"><i class="ti ti-upload"></i> 사진 업로드<input type="file" accept="image/*" multiple style="display:none" onchange="uploadPhotos(event)"></label>
+        </div>
+        <div id="gallery-status" style="display:none" class="alert alert-info mb-2"><i class="ti ti-loader"></i><span id="gallery-status-text"></span></div>
+        <div id="gallery-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px"></div>
+      </div>
+
+      <div id="sec-updates" class="section"><div id="updates-content"></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<script type="module" src="kiku-app.js"></script>
+</body>
+</html>
