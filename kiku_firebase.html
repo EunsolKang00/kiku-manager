@@ -215,6 +215,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
       <div id="sec-dashboard" class="section active">
         <div id="dashboard-alerts" style="margin-bottom:1rem"></div>
         <div id="dash-hero" style="margin-bottom:12px"></div>
+        <div id="dash-song" style="margin-bottom:12px"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
           <div id="dash-stats-card"></div>
           <div id="dash-ghost-card"></div>
@@ -243,6 +244,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
         <div class="flex" style="gap:8px;margin-bottom:1rem;border-bottom:0.5px solid var(--border);padding-bottom:0">
           <button class="btn btn-sm board-tab active" data-type="free" onclick="switchBoardType('free')"><i class="ti ti-messages"></i> 자유게시판</button>
           <button class="btn btn-sm board-tab" data-type="suggestion" onclick="switchBoardType('suggestion')"><i class="ti ti-bulb"></i> 건의사항</button>
+          <button class="btn btn-sm board-tab" data-type="song" onclick="switchBoardType('song')"><i class="ti ti-music"></i> 노래 추천</button>
         </div>
         <div class="flex-between mb-2">
           <span style="font-size:12px;color:var(--text2)" id="board-desc">자유롭게 이야기를 나눠보세요.</span>
@@ -263,6 +265,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
               <option value="name">이름순</option>
               <option value="rate">참여율순</option>
             </select>
+            <button class="btn" onclick="openLinkProfileModal()"><i class="ti ti-link"></i>내 프로필 연결</button>
             <button class="btn btn-primary edit-only" onclick="openAddMember()"><i class="ti ti-plus"></i>회원 추가</button>
           </div>
         </div>

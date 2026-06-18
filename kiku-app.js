@@ -23,7 +23,7 @@ let currentUser = null;
 let isAdmin = false;
 
 const TODAY = new Date();
-let members = [], bungs = [], notices = [];
+let members = [], bungs = [], notices = [], playlist = [];
 let posts = [], currentBoardType = 'free', currentPostId = null, postComments = [];
 let nextMemberId = 1, nextBungId = 1;
 let calYear = TODAY.getFullYear(), calMonth = TODAY.getMonth();
@@ -134,12 +134,27 @@ onAuthStateChanged(auth, async user => {
   }
 });
 
+function refreshAdminStatus() {
+  if (!currentUser) return;
+  const wasAdmin = isAdmin;
+  const me = members.find(m => m.linkedUid === currentUser.uid);
+  isAdmin = ADMIN_EMAILS.includes(currentUser.email) || (me && (me.role === 'admin' || me.role === 'host'));
+  if (isAdmin !== wasAdmin) {
+    updateEditMode();
+    const sidebarUser = document.getElementById('sidebar-user');
+    if (sidebarUser) {
+      sidebarUser.innerHTML = `<i class="ti ti-user" style="font-size:12px"></i>${currentUser.displayName||currentUser.email}${isAdmin?'<span style="font-size:10px;background:var(--warn-bg);color:var(--warn);padding:1px 5px;border-radius:3px;margin-left:4px">운영진</span>':''}`;
+    }
+  }
+}
+
 async function loadData() {
   setSyncStatus('loading', '데이터 불러오는 중...');
   try {
     const memberUnsub = onSnapshot(collection(db, 'members'), snap => {
       members = snap.docs.map(d => ({id: d.id, ...d.data()}));
       nextMemberId = members.length > 0 ? Math.max(...members.map(m => parseInt(m.numId)||0)) + 1 : 1;
+      refreshAdminStatus();
       renderAll();
     });
     const bungUnsub = onSnapshot(query(collection(db, 'bungs'), orderBy('date', 'desc')), snap => {
@@ -155,8 +170,14 @@ async function loadData() {
     const postUnsub = onSnapshot(query(collection(db, 'posts'), orderBy('createdAt', 'desc')), snap => {
       posts = snap.docs.map(d => ({id: d.id, ...d.data()}));
       renderBoardList();
+      renderTodaySong();
     });
-    unsubscribers = [memberUnsub, bungUnsub, noticeUnsub, postUnsub];
+    const playlistUnsub = onSnapshot(collection(db, 'playlist'), snap => {
+      playlist = snap.docs.map(d => ({id: d.id, ...d.data()}));
+      renderTodaySong();
+      renderPlaylistManager();
+    });
+    unsubscribers = [memberUnsub, bungUnsub, noticeUnsub, postUnsub, playlistUnsub];
     setSyncStatus('connected', '실시간 동기화 중');
   } catch(e) {
     setSyncStatus('disconnected', '연결 실패: ' + e.message);
@@ -293,7 +314,8 @@ function authorDisplayName() {
 window.switchBoardType = function(type) {
   currentBoardType = type;
   document.querySelectorAll('.board-tab').forEach(b => b.classList.toggle('active', b.dataset.type === type));
-  document.getElementById('board-desc').textContent = type === 'free' ? '자유롭게 이야기를 나눠보세요.' : '운영진에게 건의사항을 전달해보세요. 익명 작성이 가능합니다.';
+  const descMap = {free:'자유롭게 이야기를 나눠보세요.', suggestion:'운영진에게 건의사항을 전달해보세요. 익명 작성이 가능합니다.', song:'함께 부르고 싶은 노래를 추천해보세요. 추천곡은 대시보드 "오늘의 노래"에도 노출됩니다.'};
+  document.getElementById('board-desc').textContent = descMap[type] || '';
   document.getElementById('board-detail').style.display = 'none';
   document.getElementById('board-list').style.display = '';
   renderBoardList();
@@ -311,9 +333,10 @@ function renderBoardList() {
     const date = p.createdAt ? new Date(p.createdAt.seconds * 1000) : new Date();
     const displayName = p.anonymous ? '익명' : (p.authorName || '회원');
     const canManage = isAdmin || (currentUser && p.authorUid === currentUser.uid);
+    const titleHtml = p.type === 'song' ? `<i class="ti ti-music" style="color:var(--purple);margin-right:4px"></i>${p.title}` : p.title;
     return `<div class="notice-card" onclick="openPostDetail('${p.id}')">
       <div class="flex-between mb-1">
-        <strong style="font-size:14px">${p.title}</strong>
+        <strong style="font-size:14px">${titleHtml}</strong>
         <div class="flex" style="gap:4px">
           ${canManage ? `<button class="btn btn-sm" onclick="event.stopPropagation();openEditPost('${p.id}')"><i class="ti ti-edit"></i></button>
           <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deletePost('${p.id}')"><i class="ti ti-trash"></i></button>` : ''}
@@ -331,6 +354,17 @@ function renderBoardList() {
 window.openAddPost = function() {
   if (!currentUser) return requireLogin('글쓰기는 로그인 후 이용할 수 있습니다.');
   const isSuggestion = currentBoardType === 'suggestion';
+  const isSong = currentBoardType === 'song';
+  if (isSong) {
+    openModal(`<div class="modal-title"><i class="ti ti-music" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>노래 추천하기</div>
+      <div class="form-row">
+        <div class="form-group"><label>곡명</label><input type="text" id="p-song" placeholder="예: Lemon" autofocus></div>
+        <div class="form-group"><label>아티스트</label><input type="text" id="p-artist" placeholder="예: 요네즈 켄시"></div>
+      </div>
+      <div class="form-group"><label>추천 이유 (선택)</label><textarea id="p-content" placeholder="이 노래를 추천하는 이유를 적어주세요" style="min-height:100px"></textarea></div>
+      <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="addPost()">등록</button></div>`);
+    return;
+  }
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>${isSuggestion?'건의사항':'자유게시판'} 글쓰기</div>
     <div class="form-group"><label>제목</label><input type="text" id="p-title" placeholder="제목을 입력하세요" autofocus></div>
     <div class="form-group"><label>내용</label><textarea id="p-content" placeholder="내용을 입력하세요" style="min-height:140px"></textarea></div>
@@ -339,11 +373,20 @@ window.openAddPost = function() {
 };
 
 window.addPost = async function() {
-  const title = document.getElementById('p-title').value.trim();
+  const isSong = currentBoardType === 'song';
+  let title, songName, artistName;
+  if (isSong) {
+    songName = document.getElementById('p-song').value.trim();
+    artistName = document.getElementById('p-artist').value.trim();
+    if (!songName) { alert('곡명을 입력해주세요.'); return; }
+    title = artistName ? `${songName} - ${artistName}` : songName;
+  } else {
+    title = document.getElementById('p-title').value.trim();
+  }
   const content = document.getElementById('p-content').value.trim();
-  if (!title || !content) { alert('제목과 내용을 입력해주세요.'); return; }
+  if (!isSong && (!title || !content)) { alert('제목과 내용을 입력해주세요.'); return; }
   const anon = document.getElementById('p-anon')?.checked || false;
-  await addDoc(collection(db, 'posts'), {
+  const data = {
     type: currentBoardType, title, content,
     anonymous: anon,
     authorName: authorDisplayName(),
@@ -351,7 +394,9 @@ window.addPost = async function() {
     authorEmail: currentUser.email,
     commentCount: 0,
     createdAt: serverTimestamp(),
-  });
+  };
+  if (isSong) { data.songName = songName; data.artistName = artistName; }
+  await addDoc(collection(db, 'posts'), data);
   closeModal();
 };
 
@@ -523,7 +568,7 @@ function getMyMember() {
 }
 
 function checkProfileLink() {
-  if (!currentUser || isAdmin) return;
+  if (!currentUser) return;
   const me = getMyMember();
   if (me) return;
   const pending = members.find(m => m.linkPendingUid === currentUser.uid);
@@ -531,23 +576,30 @@ function checkProfileLink() {
   openLinkProfileModal();
 }
 
-function openLinkProfileModal() {
+window.openLinkProfileModal = function() {
+  if (!currentUser) return requireLogin('프로필 연결은 로그인 후 이용할 수 있습니다.');
+  if (getMyMember()) { alert('이미 프로필이 연결되어 있습니다.'); return; }
   const unlinked = members.filter(m => !m.linkedUid && !m.linkPendingUid);
   openModal(`<div class="modal-title"><i class="ti ti-user-circle" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>내 프로필 연결</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.7">처음 로그인하셨네요! 명단에서 본인 이름을 선택해주세요.<br>운영진 확인 후 연결이 확정됩니다.</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.7">${isAdmin?'명단에서 본인 이름을 선택해주세요. 운영진 계정은 즉시 연결됩니다.':'처음 로그인하셨네요! 명단에서 본인 이름을 선택해주세요.<br>운영진 확인 후 연결이 확정됩니다.'}</div>
     <div class="form-group"><label>본인 이름 선택</label>
       <select id="link-member-select"><option value="">선택하세요</option>
       ${unlinked.map(m=>`<option value="${m.id}">${m.name}</option>`).join('')}
       </select>
     </div>
     ${unlinked.length===0?'<div class="alert alert-info" style="margin-bottom:12px">연결 가능한 명단이 없습니다. 운영진에게 문의해주세요.</div>':''}
-    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">나중에</button><button class="btn btn-primary" onclick="requestProfileLink()">연결 요청</button></div>`);
-}
-window.openLinkProfileModal = openLinkProfileModal;
+    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">나중에</button><button class="btn btn-primary" onclick="requestProfileLink()">${isAdmin?'바로 연결':'연결 요청'}</button></div>`);
+};
 
 window.requestProfileLink = async function() {
   const id = document.getElementById('link-member-select').value;
   if (!id) { alert('이름을 선택해주세요.'); return; }
+  if (isAdmin) {
+    await updateDoc(doc(db, 'members', id), { linkedUid: currentUser.uid });
+    closeModal();
+    alert('프로필이 연결되었습니다.');
+    return;
+  }
   await updateDoc(doc(db, 'members', id), {
     linkPendingUid: currentUser.uid,
     linkPendingEmail: currentUser.email,
@@ -577,6 +629,30 @@ window.unlinkProfile = async function(id) {
   const m = members.find(x => x.id === id);
   if (!m || !confirm(`"${m.name}" 회원의 계정 연결을 해제할까요?`)) return;
   await updateDoc(doc(db, 'members', id), {linkedUid: null});
+};
+
+// ── 역할 부여 (운영진/모임장) ────────────────────────────────────
+window.openSetRole = function(id) {
+  if (!isAdmin) return;
+  const m = members.find(x => x.id === id);
+  if (!m) return;
+  openModal(`<div class="modal-title"><i class="ti ti-crown" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>역할 지정 — ${m.name}</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.7">운영진과 모임장은 동일한 관리 권한을 가집니다. 역할을 가진 회원은 계정 연결 시 자동으로 운영진 권한이 부여됩니다.</div>
+    <div class="form-group"><label>역할</label>
+      <select id="role-select">
+        <option value="" ${!m.role?'selected':''}>일반 회원</option>
+        <option value="admin" ${m.role==='admin'?'selected':''}>운영진</option>
+        <option value="host" ${m.role==='host'?'selected':''}>모임장</option>
+      </select>
+    </div>
+    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="saveRole('${id}')">저장</button></div>`);
+};
+
+window.saveRole = async function(id) {
+  if (!isAdmin) return;
+  const role = document.getElementById('role-select').value || null;
+  await updateDoc(doc(db, 'members', id), {role});
+  closeModal();
 };
 
 // ── 프로필 커스텀 (본인만 수정 가능) ────────────────────────────────
@@ -900,6 +976,7 @@ function getGroupAchievements() {
 // ── 렌더링 ────────────────────────────────────────────────────────
 function renderAll() {
   renderDashboard();
+  renderTodaySong();
   renderDashboardAlerts();
   renderDashboardAchievements();
   renderMembers();
@@ -1079,6 +1156,86 @@ function renderDashboard() {
   }
 }
 
+// ── 오늘의 노래 추천 ─────────────────────────────────────────────
+function dateSeed(d) {
+  const s = `${d.getFullYear()}${d.getMonth()}${d.getDate()}`;
+  let h = 0;
+  for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+function getSongPool() {
+  const fromPlaylist = playlist.map(p => ({songName:p.songName, artistName:p.artistName||'', source:'playlist', addedBy:p.addedBy||'운영진'}));
+  const fromBoard = posts.filter(p=>p.type==='song' && p.songName).map(p => ({songName:p.songName, artistName:p.artistName||'', source:'board', addedBy:p.anonymous?'익명':(p.authorName||'회원')}));
+  return [...fromPlaylist, ...fromBoard];
+}
+
+function renderTodaySong() {
+  const el = document.getElementById('dash-song');
+  if (!el) return;
+  const pool = getSongPool();
+  if (pool.length === 0) {
+    el.innerHTML = `<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
+      <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase;margin-bottom:8px">🎵 오늘의 노래 추천</div>
+      <div style="font-size:13px;color:var(--text2)">등록된 추천곡이 없습니다. ${isAdmin?'플레이리스트를 추가하거나 ':''}게시판에서 노래를 추천해보세요!</div>
+      ${isAdmin?`<button class="btn btn-sm" style="margin-top:8px" onclick="openPlaylistManager()"><i class="ti ti-playlist"></i> 플레이리스트 관리</button>`:''}
+    </div>`;
+    return;
+  }
+  const idx = dateSeed(TODAY) % pool.length;
+  const pick = pool[idx];
+  const sourceLabel = pick.source === 'playlist' ? `운영진 플레이리스트` : `${pick.addedBy} 추천`;
+  el.innerHTML = `<div style="background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
+    <div class="flex-between" style="margin-bottom:8px">
+      <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase">🎵 오늘의 노래 추천</div>
+      ${isAdmin?`<button class="btn btn-sm" onclick="openPlaylistManager()"><i class="ti ti-playlist"></i> 관리</button>`:''}
+    </div>
+    <div style="font-size:18px;font-weight:600">${pick.songName}</div>
+    ${pick.artistName?`<div style="font-size:13px;color:var(--text2);margin-top:2px">${pick.artistName}</div>`:''}
+    <div style="font-size:11px;color:var(--text3);margin-top:8px">${sourceLabel} · 추천곡 ${pool.length}개 중 오늘의 선곡</div>
+  </div>`;
+}
+
+window.openPlaylistManager = function() {
+  if (!isAdmin) return;
+  openModal(`<div class="modal-title"><i class="ti ti-playlist" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>플레이리스트 관리</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">여기에 추가한 곡과 노래 추천 게시판에 올라온 곡이 함께 "오늘의 노래 추천" 풀에 들어갑니다.</div>
+    <div class="form-row">
+      <div class="form-group"><label>곡명</label><input type="text" id="pl-song" placeholder="예: Lemon"></div>
+      <div class="form-group"><label>아티스트</label><input type="text" id="pl-artist" placeholder="예: 요네즈 켄시"></div>
+    </div>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="addPlaylistSong()"><i class="ti ti-plus"></i> 추가</button>
+    <div style="font-size:13px;font-weight:500;margin-bottom:8px">등록된 플레이리스트 (${playlist.length}곡)</div>
+    <div id="playlist-manage-list" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto;margin-bottom:14px"></div>
+    <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeModal()">닫기</button></div>`);
+  renderPlaylistManager();
+};
+
+function renderPlaylistManager() {
+  const el = document.getElementById('playlist-manage-list');
+  if (!el) return;
+  if (playlist.length === 0) { el.innerHTML = '<div style="font-size:13px;color:var(--text2)">등록된 곡이 없습니다.</div>'; return; }
+  el.innerHTML = playlist.map(p => `<div class="flex-between" style="background:var(--bg2);border-radius:var(--radius);padding:8px 10px">
+    <div><span style="font-size:13px;font-weight:500">${p.songName}</span>${p.artistName?`<span style="font-size:12px;color:var(--text2);margin-left:6px">${p.artistName}</span>`:''}</div>
+    <button class="btn btn-sm btn-danger" onclick="deletePlaylistSong('${p.id}')"><i class="ti ti-trash"></i></button>
+  </div>`).join('');
+}
+
+window.addPlaylistSong = async function() {
+  if (!isAdmin) return;
+  const songName = document.getElementById('pl-song').value.trim();
+  const artistName = document.getElementById('pl-artist').value.trim();
+  if (!songName) { alert('곡명을 입력해주세요.'); return; }
+  await addDoc(collection(db, 'playlist'), {songName, artistName, addedBy: currentUser.displayName||currentUser.email, createdAt: serverTimestamp()});
+  document.getElementById('pl-song').value = '';
+  document.getElementById('pl-artist').value = '';
+};
+
+window.deletePlaylistSong = async function(id) {
+  if (!isAdmin) return;
+  await deleteDoc(doc(db, 'playlist', id));
+};
+
 function renderDashboardAlerts() {
   const cd = getCalcDate();
   const el = document.getElementById('dashboard-alerts');
@@ -1182,7 +1339,9 @@ function renderMembers() {
     const gradeBadge = `<span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${grade.bg};color:${grade.color};font-weight:500">${grade.label}</span>`;
     const memo = m.memo?`<div class="memo-text">📝 ${m.memo}</div>`:'<span style="color:var(--text3);font-size:12px">-</span>';
     const linkBadge = m.linkedUid ? `<i class="ti ti-link" style="color:var(--success);font-size:12px;margin-left:4px" title="계정 연결됨"></i>` : '';
-    return `<tr${rc}><td><strong>${m.name}</strong>${linkBadge}</td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'<span style="color:var(--text2)">없음</span>'}</td><td style="text-align:center"><input type="checkbox" class="contact-check" ${m.contacted?'checked':''} onchange="toggleContact('${m.id}',this.checked)" ${isAdmin?'':' disabled'}></td><td>${badgeMap[status]}</td><td>${gradeBadge}</td><td>${memo}</td><td class="edit-only"><div class="flex" style="gap:4px"><button class="btn btn-sm" onclick="openEditMember('${m.id}')"><i class="ti ti-edit"></i></button>${m.linkedUid?`<button class="btn btn-sm" onclick="unlinkProfile('${m.id}')" title="연결 해제"><i class="ti ti-unlink"></i></button>`:''}<button class="btn btn-sm btn-danger" onclick="deleteMember('${m.id}')"><i class="ti ti-trash"></i></button></div></td></tr>`;
+    const roleLabel = m.role==='admin' ? '운영진' : m.role==='host' ? '모임장' : '';
+    const roleBadge = roleLabel ? `<span style="font-size:10px;background:var(--warn-bg);color:var(--warn);padding:1px 5px;border-radius:3px;margin-left:4px">${roleLabel}</span>` : '';
+    return `<tr${rc}><td><strong>${m.name}</strong>${linkBadge}${roleBadge}</td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'<span style="color:var(--text2)">없음</span>'}</td><td style="text-align:center"><input type="checkbox" class="contact-check" ${m.contacted?'checked':''} onchange="toggleContact('${m.id}',this.checked)" ${isAdmin?'':' disabled'}></td><td>${badgeMap[status]}</td><td>${gradeBadge}</td><td>${memo}</td><td class="edit-only"><div class="flex" style="gap:4px"><button class="btn btn-sm" onclick="openEditMember('${m.id}')"><i class="ti ti-edit"></i></button><button class="btn btn-sm" onclick="openSetRole('${m.id}')" title="역할 지정"><i class="ti ti-crown"></i></button>${m.linkedUid?`<button class="btn btn-sm" onclick="unlinkProfile('${m.id}')" title="연결 해제"><i class="ti ti-unlink"></i></button>`:''}<button class="btn btn-sm btn-danger" onclick="deleteMember('${m.id}')"><i class="ti ti-trash"></i></button></div></td></tr>`;
   }).join('');
 }
 
@@ -1607,7 +1766,8 @@ function renderMemberProfile(id) {
 }
 
 const UPDATES=[
-  {version:'v2.2',date:'2026.06.18',items:['모바일/사파리 로그인 오류 수정 (팝업 우선 방식 + 실패 시 원인 표시)','로그인 없이 둘러보기(게스트 모드) 추가','구글 로그인 시 개인정보 수집·이용 안내 동의 절차 추가','회원 프로필 "목록으로" 버튼 작동 오류 수정','프로필 사진이 전체 회원 목록·이달의 MVP·이달의 벙주 카드에도 반영되도록 수정']},
+  {version:'v2.3',date:'2026.06.18',items:['회원에게 운영진/모임장 역할 부여 기능 추가 (회원 명단에서 지정, 동일 관리 권한)','오늘의 노래 추천 — 대시보드에 매일 자동 추천 (운영진 플레이리스트 + 노래 추천 게시판 추천곡 합산)','노래 추천 게시판 추가 — 곡명/아티스트/추천 이유 입력']},
+  {version:'v2.2',date:'2026.06.18',items:['모바일/사파리 로그인 오류 수정 (팝업 우선 방식 + 실패 시 원인 표시)','로그인 없이 둘러보기(게스트 모드) 추가','구글 로그인 시 개인정보 수집·이용 안내 동의 절차 추가','회원 프로필 "목록으로" 버튼 작동 오류 수정','프로필 사진이 전체 회원 목록·이달의 MVP·이달의 벙주 카드에도 반영되도록 수정','운영진 계정도 회원 프로필 연동 가능하도록 수정 (즉시 연결), 회원 명단 탭에 "내 프로필 연결" 버튼 추가']},
   {version:'v2.1',date:'2026.06.18',items:['게시판 기능 추가 — 자유게시판, 건의사항(익명 가능), 댓글 기능','회원 프로필 ↔ 구글 계정 연결 시스템 (운영진 승인 방식)','프로필 커스텀 — 닉네임, 사진, 한줄소개, 최애곡/아티스트 (본인만 수정 가능)','통계 탭 기준을 최근 2개월 활동성으로 변경, 명예의 전당(전체 역대)과 역할 구분']},
   {version:'v2.0',date:'2026.06.17',items:['Firebase 전환 — 실시간 동기화, 회원별 Google 로그인','공지사항 탭 추가 — 작성/수정/삭제, 상단 고정, 중요 표시','운영진/일반 회원 권한 분리','Firebase Storage로 갤러리 전환']},
   {version:'v1.7',date:'2026.06.17',items:['캘린더 탭 추가','회원 프로필 탭 추가']},
