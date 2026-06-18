@@ -89,7 +89,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--text)}
 .contact-check{width:14px;height:14px;cursor:pointer;accent-color:var(--purple)}
 .modal-backdrop{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);z-index:200;align-items:center;justify-content:center;padding:1rem}
 .modal-backdrop.open{display:flex}
-.modal{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;width:100%;max-width:500px;max-height:90vh;overflow-y:auto}
+.modal{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;overflow-wrap:anywhere;word-break:break-word}
 .modal-title{font-size:15px;font-weight:500;margin-bottom:1rem}
 h3{font-size:15px;font-weight:500;margin-bottom:10px}
 .section-label{font-size:11px;font-weight:500;color:var(--text2);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px}
@@ -130,7 +130,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
 .cal-event.bungae{background:var(--warn-bg);color:var(--warn)}
 .profile-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:1rem}
 .profile-avatar{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:500;flex-shrink:0}
-.notice-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:10px;cursor:pointer}
+.notice-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;margin-bottom:10px;cursor:pointer;overflow-wrap:anywhere;word-break:break-word}
 .notice-card:hover{border-color:var(--text2)}
 .notice-pinned{border-left:3px solid var(--warn)}
 .notice-tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:var(--radius);font-weight:500;margin-right:6px}

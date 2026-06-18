@@ -460,7 +460,7 @@ function renderPostDetail() {
           return `<div style="background:var(--bg2);border-radius:var(--radius);padding:10px 12px">
             <div class="flex-between"><span style="font-size:12px;font-weight:500">${c.authorName}</span>
             ${canDel?`<button class="btn btn-sm" style="padding:2px 6px" onclick="deleteComment('${c.id}')"><i class="ti ti-trash" style="font-size:12px"></i></button>`:''}</div>
-            <div style="font-size:13px;margin-top:4px;white-space:pre-wrap">${c.content}</div>
+            <div style="font-size:13px;margin-top:4px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">${c.content}</div>
             <div style="font-size:10px;color:var(--text3);margin-top:4px">${formatDate(cdate)}</div>
           </div>`;
         }).join('')}
@@ -1766,7 +1766,7 @@ function renderMemberProfile(id) {
 }
 
 const UPDATES=[
-  {version:'v2.3',date:'2026.06.18',items:['회원에게 운영진/모임장 역할 부여 기능 추가 (회원 명단에서 지정, 동일 관리 권한)','오늘의 노래 추천 — 대시보드에 매일 자동 추천 (운영진 플레이리스트 + 노래 추천 게시판 추천곡 합산)','노래 추천 게시판 추가 — 곡명/아티스트/추천 이유 입력']},
+  {version:'v2.3',date:'2026.06.18',items:['회원에게 운영진/모임장 역할 부여 기능 추가 (회원 명단에서 지정, 동일 관리 권한)','오늘의 노래 추천 — 대시보드에 매일 자동 추천 (운영진 플레이리스트 + 노래 추천 게시판 추천곡 합산)','노래 추천 게시판 추가 — 곡명/아티스트/추천 이유 입력','게시판·공지·댓글에 긴 글(줄바꿈 없는 텍스트) 작성 시 페이지가 가로로 길게 늘어나던 버그 수정']},
   {version:'v2.2',date:'2026.06.18',items:['모바일/사파리 로그인 오류 수정 (팝업 우선 방식 + 실패 시 원인 표시)','로그인 없이 둘러보기(게스트 모드) 추가','구글 로그인 시 개인정보 수집·이용 안내 동의 절차 추가','회원 프로필 "목록으로" 버튼 작동 오류 수정','프로필 사진이 전체 회원 목록·이달의 MVP·이달의 벙주 카드에도 반영되도록 수정','운영진 계정도 회원 프로필 연동 가능하도록 수정 (즉시 연결), 회원 명단 탭에 "내 프로필 연결" 버튼 추가']},
   {version:'v2.1',date:'2026.06.18',items:['게시판 기능 추가 — 자유게시판, 건의사항(익명 가능), 댓글 기능','회원 프로필 ↔ 구글 계정 연결 시스템 (운영진 승인 방식)','프로필 커스텀 — 닉네임, 사진, 한줄소개, 최애곡/아티스트 (본인만 수정 가능)','통계 탭 기준을 최근 2개월 활동성으로 변경, 명예의 전당(전체 역대)과 역할 구분']},
   {version:'v2.0',date:'2026.06.17',items:['Firebase 전환 — 실시간 동기화, 회원별 Google 로그인','공지사항 탭 추가 — 작성/수정/삭제, 상단 고정, 중요 표시','운영진/일반 회원 권한 분리','Firebase Storage로 갤러리 전환']},
