@@ -31,14 +31,67 @@ let selectedMemberId = null;
 let unsubscribers = [];
 
 window.signInWithGoogle = async function() {
+  const agreeEl = document.getElementById('terms-agree');
+  if (agreeEl && !agreeEl.checked) {
+    document.getElementById('login-status').textContent = '개인정보 수집·이용에 동의해주세요.';
+    return;
+  }
   document.getElementById('login-status').textContent = '로그인 중...';
   try {
-    const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-    if (isMobile) { await signInWithRedirect(auth, provider); }
-    else { await signInWithPopup(auth, provider); }
+    await signInWithPopup(auth, provider);
   } catch(e) {
-    document.getElementById('login-status').textContent = '로그인 실패: ' + e.message;
+    // 팝업이 막히거나 지원되지 않는 환경(일부 인앱 브라우저 등)이면 리다이렉트로 폴백
+    if (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment' || e.code === 'auth/cancelled-popup-request') {
+      try {
+        await signInWithRedirect(auth, provider);
+      } catch(e2) {
+        document.getElementById('login-status').textContent = '로그인 실패: ' + e2.message;
+      }
+    } else if (e.code === 'auth/popup-closed-by-user') {
+      document.getElementById('login-status').textContent = '';
+    } else {
+      document.getElementById('login-status').textContent = '로그인 실패: ' + e.message + ' (' + (e.code||'') + ')';
+    }
   }
+};
+
+window.openTermsModal = function() {
+  openModal(`<div class="modal-title"><i class="ti ti-shield-check" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>개인정보 수집·이용 안내</div>
+    <div style="font-size:13px;line-height:1.8;max-height:50vh;overflow-y:auto;margin-bottom:16px">
+      <p><strong>1. 수집 항목</strong><br>Google 계정의 이름, 이메일 주소, 프로필 사진(선택 시)</p>
+      <p><strong>2. 수집 목적</strong><br>KIKU 소모임 회원 식별 및 회원 프로필 연동, 운영진 권한 확인</p>
+      <p><strong>3. 보유 및 이용 기간</strong><br>회원 탈퇴 또는 연결 해제 요청 시까지 보관하며, 요청 시 즉시 삭제합니다.</p>
+      <p><strong>4. 제3자 제공</strong><br>수집된 정보는 외부에 제공되지 않으며, 운영진 확인 목적으로만 사용됩니다.</p>
+      <p><strong>5. 동의 거부 권리</strong><br>동의하지 않을 경우 Google 로그인 기반 기능(프로필 연동 등) 이용이 제한되며, 로그인 없이도 일부 정보 열람은 가능합니다.</p>
+      <p><strong>6. 문의</strong><br>운영진 이메일(qeqe147258@gmail.com)로 문의해주세요.</p>
+    </div>
+    <div class="flex" style="justify-content:flex-end"><button class="btn btn-primary" onclick="closeModal()">확인</button></div>`);
+};
+
+window.enterAsGuest = function() {
+  currentUser = null;
+  isAdmin = false;
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('sidebar-user').innerHTML = `<i class="ti ti-eye" style="font-size:12px"></i>게스트 (둘러보기)`;
+  const authBtn = document.getElementById('auth-action-btn');
+  if (authBtn) authBtn.innerHTML = '<i class="ti ti-login"></i> 로그인';
+  if (authBtn) authBtn.setAttribute('onclick', 'exitGuestMode()');
+  updateEditMode();
+  initTheme();
+  loadData();
+};
+
+window.exitGuestMode = function() {
+  unsubscribers.forEach(u => u());
+  unsubscribers = [];
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+};
+
+window.requireLogin = function(msg) {
+  alert(msg || '로그인이 필요한 기능입니다.');
+  return false;
 };
 
 window.signOut = async function() {
@@ -48,13 +101,26 @@ window.signOut = async function() {
   await fbSignOut(auth);
 };
 
+function resetAuthActionBtn() {
+  const authBtn = document.getElementById('auth-action-btn');
+  if (!authBtn) return;
+  authBtn.innerHTML = '<i class="ti ti-logout"></i> 로그아웃';
+  authBtn.setAttribute('onclick', 'signOut()');
+}
+
 onAuthStateChanged(auth, async user => {
-  await getRedirectResult(auth).catch(() => {});
+  try {
+    await getRedirectResult(auth);
+  } catch(e) {
+    const statusEl = document.getElementById('login-status');
+    if (statusEl) statusEl.textContent = '로그인 실패: ' + e.message + ' (' + (e.code||'') + ')';
+  }
   if (user) {
     currentUser = user;
     isAdmin = ADMIN_EMAILS.includes(user.email);
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
+    resetAuthActionBtn();
     document.getElementById('sidebar-user').innerHTML = `<i class="ti ti-user" style="font-size:12px"></i>${user.displayName||user.email}${isAdmin?'<span style="font-size:10px;background:var(--warn-bg);color:var(--warn);padding:1px 5px;border-radius:3px;margin-left:4px">운영진</span>':''}`;
     updateEditMode();
     initTheme();
@@ -263,6 +329,7 @@ function renderBoardList() {
 }
 
 window.openAddPost = function() {
+  if (!currentUser) return requireLogin('글쓰기는 로그인 후 이용할 수 있습니다.');
   const isSuggestion = currentBoardType === 'suggestion';
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>${isSuggestion?'건의사항':'자유게시판'} 글쓰기</div>
     <div class="form-group"><label>제목</label><input type="text" id="p-title" placeholder="제목을 입력하세요" autofocus></div>
@@ -367,6 +434,7 @@ window.closePostDetail = function() {
 };
 
 window.addComment = async function() {
+  if (!currentUser) return requireLogin('댓글 작성은 로그인 후 이용할 수 있습니다.');
   const input = document.getElementById('comment-input');
   const content = input.value.trim();
   if (!content) return;
@@ -970,7 +1038,7 @@ function renderDashboard() {
     mvpEl.innerHTML = `<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
       <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase;margin-bottom:10px">⭐ 이달의 MVP</div>
       ${mvp?`<div style="display:flex;align-items:center;gap:10px">
-        <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--warn-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:500;flex-shrink:0">${mvp.name[0]}</div>
+        ${mvp.photoURL?`<img src="${mvp.photoURL}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0">`:`<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--warn-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:500;flex-shrink:0">${mvp.name[0]}</div>`}
         <div><div style="font-weight:500">${mvp.name}</div><div style="font-size:12px;color:var(--text2);margin-top:2px">이번 달 ${mvp.count}/${mvp.total}회 참석</div></div>
         <div style="margin-left:auto;font-size:22px">🏆</div>
       </div>`:`<div style="font-size:13px;color:var(--text2)">이번 달 벙 기록 없음</div>`}
@@ -1328,7 +1396,7 @@ function renderHall() {
   el.innerHTML = `
   <div class="hall-card"><h3>👑 이달의 벙주 (${TODAY.getMonth()+1}월)</h3>
     ${topHost?`<div style="display:flex;align-items:center;gap:16px;padding:8px 0">
-      <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--warn-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:500">${topHost.name[0]}</div>
+      ${topHost.photoURL?`<img src="${topHost.photoURL}" style="width:52px;height:52px;border-radius:50%;object-fit:cover">`:`<div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--warn-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:500">${topHost.name[0]}</div>`}
       <div><div style="font-size:18px;font-weight:500">${topHost.name}</div><div style="font-size:13px;color:var(--text2);margin-top:3px">이번 달 ${hostCount[topHostId]}회 벙주</div></div>
       <div style="margin-left:auto;font-size:36px">👑</div></div>`:'<div style="font-size:13px;color:var(--text2);padding:8px 0">이번 달 벙주 기록 없음</div>'}
   </div>
@@ -1439,7 +1507,7 @@ function renderProfileList() {
       const grade=getMemberGrade(rate);
       const achvCount=getAchievements(m).filter(a=>a.unlocked).length;
       return `<div onclick="openProfile('${m.id}')" style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem;cursor:pointer" onmouseover="this.style.borderColor='var(--text2)'" onmouseout="this.style.borderColor='var(--border)'">
-        <div style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:500;margin-bottom:8px">${m.name[0]}</div>
+        ${m.photoURL?`<img src="${m.photoURL}" style="width:44px;height:44px;border-radius:50%;object-fit:cover;margin-bottom:8px">`:`<div style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:500;margin-bottom:8px">${m.name[0]}</div>`}
         <div style="font-size:13px;font-weight:500;margin-bottom:4px">${m.name}</div>
         <div style="font-size:11px;padding:2px 6px;border-radius:var(--radius);background:${grade.bg};color:${grade.color};font-weight:500;display:inline-block;margin-bottom:6px">${grade.label}</div>
         <div style="font-size:11px;color:var(--text2)">${rate}% · 업적 ${achvCount}개</div>
@@ -1474,7 +1542,7 @@ function renderMemberProfile(id) {
   const attendedBungs=[...attended].sort((a,b)=>new Date(b.date)-new Date(a.date));
   const isMyProfile = currentUser && m.linkedUid === currentUser.uid;
   el.innerHTML=`
-  <div style="margin-bottom:12px;display:flex;justify-content:space-between"><button class="btn btn-sm" onclick="selectedMemberId=null;renderProfileList()"><i class="ti ti-arrow-left"></i> 목록으로</button>
+  <div style="margin-bottom:12px;display:flex;justify-content:space-between"><button class="btn btn-sm" onclick="backToProfileList()"><i class="ti ti-arrow-left"></i> 목록으로</button>
   ${isMyProfile?`<button class="btn btn-sm btn-primary" onclick="openEditMyProfile('${m.id}')"><i class="ti ti-edit"></i> 내 프로필 수정</button>`:''}</div>
   <div class="profile-card">
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
@@ -1539,6 +1607,7 @@ function renderMemberProfile(id) {
 }
 
 const UPDATES=[
+  {version:'v2.2',date:'2026.06.18',items:['모바일/사파리 로그인 오류 수정 (팝업 우선 방식 + 실패 시 원인 표시)','로그인 없이 둘러보기(게스트 모드) 추가','구글 로그인 시 개인정보 수집·이용 안내 동의 절차 추가','회원 프로필 "목록으로" 버튼 작동 오류 수정','프로필 사진이 전체 회원 목록·이달의 MVP·이달의 벙주 카드에도 반영되도록 수정']},
   {version:'v2.1',date:'2026.06.18',items:['게시판 기능 추가 — 자유게시판, 건의사항(익명 가능), 댓글 기능','회원 프로필 ↔ 구글 계정 연결 시스템 (운영진 승인 방식)','프로필 커스텀 — 닉네임, 사진, 한줄소개, 최애곡/아티스트 (본인만 수정 가능)','통계 탭 기준을 최근 2개월 활동성으로 변경, 명예의 전당(전체 역대)과 역할 구분']},
   {version:'v2.0',date:'2026.06.17',items:['Firebase 전환 — 실시간 동기화, 회원별 Google 로그인','공지사항 탭 추가 — 작성/수정/삭제, 상단 고정, 중요 표시','운영진/일반 회원 권한 분리','Firebase Storage로 갤러리 전환']},
   {version:'v1.7',date:'2026.06.17',items:['캘린더 탭 추가','회원 프로필 탭 추가']},
@@ -1583,6 +1652,7 @@ window.filterProfileList = function(q) {
 };
 
 window.openProfile = function(id) { selectedMemberId=id; renderMemberProfile(id); };
+window.backToProfileList = function() { selectedMemberId=null; renderProfileList(); };
 window.calNav = function(dir) {
   calMonth+=dir;
   if(calMonth>11){calMonth=0;calYear++;}
