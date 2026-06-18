@@ -38,6 +38,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .btn{padding:6px 14px;border:0.5px solid var(--border2);border-radius:var(--radius);background:none;cursor:pointer;font-size:13px;color:var(--text)}
 .btn:hover{background:var(--bg2)}
 .btn-primary{background:var(--text);color:var(--bg);border-color:var(--text)}
+.board-tab.active{background:var(--text);color:var(--bg);border-color:var(--text)}
 .btn-primary:hover{opacity:0.85}
 .btn-danger{color:var(--danger);border-color:var(--danger-border)}
 .btn-danger:hover{background:var(--danger-bg)}
@@ -174,6 +175,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
     <nav class="sidebar-nav">
       <button class="nav-item active" onclick="switchTab('dashboard')"><i class="ti ti-layout-dashboard"></i>대시보드</button>
       <button class="nav-item" onclick="switchTab('notice')"><i class="ti ti-speakerphone"></i>공지사항<span class="badge-dot" id="notice-dot" style="display:none"></span></button>
+      <button class="nav-item" onclick="switchTab('board')"><i class="ti ti-message-circle-2"></i>게시판</button>
       <div class="nav-divider"></div>
       <button class="nav-item" onclick="switchTab('members')"><i class="ti ti-users"></i>회원 명단</button>
       <button class="nav-item" onclick="switchTab('bung')"><i class="ti ti-calendar-event"></i>벙 관리</button>
@@ -232,7 +234,21 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
         <div id="notice-list"></div>
       </div>
 
+      <div id="sec-board" class="section">
+        <div class="flex" style="gap:8px;margin-bottom:1rem;border-bottom:0.5px solid var(--border);padding-bottom:0">
+          <button class="btn btn-sm board-tab active" data-type="free" onclick="switchBoardType('free')"><i class="ti ti-messages"></i> 자유게시판</button>
+          <button class="btn btn-sm board-tab" data-type="suggestion" onclick="switchBoardType('suggestion')"><i class="ti ti-bulb"></i> 건의사항</button>
+        </div>
+        <div class="flex-between mb-2">
+          <span style="font-size:12px;color:var(--text2)" id="board-desc">자유롭게 이야기를 나눠보세요.</span>
+          <button class="btn btn-primary" onclick="openAddPost()"><i class="ti ti-plus"></i>글쓰기</button>
+        </div>
+        <div id="board-list"></div>
+        <div id="board-detail" style="display:none"></div>
+      </div>
+
       <div id="sec-members" class="section">
+        <div id="link-requests-area" class="edit-only"></div>
         <div class="flex-between mb-2">
           <h3 style="margin-bottom:0">전체 회원</h3>
           <div class="flex" style="gap:8px;flex-wrap:wrap">

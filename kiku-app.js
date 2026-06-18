@@ -24,6 +24,7 @@ let isAdmin = false;
 
 const TODAY = new Date();
 let members = [], bungs = [], notices = [];
+let posts = [], currentBoardType = 'free', currentPostId = null, postComments = [];
 let nextMemberId = 1, nextBungId = 1;
 let calYear = TODAY.getFullYear(), calMonth = TODAY.getMonth();
 let selectedMemberId = null;
@@ -58,6 +59,7 @@ onAuthStateChanged(auth, async user => {
     updateEditMode();
     initTheme();
     await loadData();
+    setTimeout(checkProfileLink, 600);
   } else {
     currentUser = null;
     isAdmin = false;
@@ -84,7 +86,11 @@ async function loadData() {
       renderNotices();
       updateNoticeDot();
     });
-    unsubscribers = [memberUnsub, bungUnsub, noticeUnsub];
+    const postUnsub = onSnapshot(query(collection(db, 'posts'), orderBy('createdAt', 'desc')), snap => {
+      posts = snap.docs.map(d => ({id: d.id, ...d.data()}));
+      renderBoardList();
+    });
+    unsubscribers = [memberUnsub, bungUnsub, noticeUnsub, postUnsub];
     setSyncStatus('connected', '실시간 동기화 중');
   } catch(e) {
     setSyncStatus('disconnected', '연결 실패: ' + e.message);
@@ -212,6 +218,178 @@ window.deleteNotice = async function(id) {
   await deleteDoc(doc(db, 'notices', id));
 };
 
+// ── 게시판 (자유게시판/건의사항) ──────────────────────────────────
+function authorDisplayName() {
+  const me = getMyMember();
+  return me ? me.name : (currentUser.displayName || currentUser.email);
+}
+
+window.switchBoardType = function(type) {
+  currentBoardType = type;
+  document.querySelectorAll('.board-tab').forEach(b => b.classList.toggle('active', b.dataset.type === type));
+  document.getElementById('board-desc').textContent = type === 'free' ? '자유롭게 이야기를 나눠보세요.' : '운영진에게 건의사항을 전달해보세요. 익명 작성이 가능합니다.';
+  document.getElementById('board-detail').style.display = 'none';
+  document.getElementById('board-list').style.display = '';
+  renderBoardList();
+};
+
+function renderBoardList() {
+  const el = document.getElementById('board-list');
+  if (!el) return;
+  const list = posts.filter(p => p.type === currentBoardType);
+  if (list.length === 0) {
+    el.innerHTML = `<div class="empty-state"><i class="ti ti-message-2"></i>등록된 글이 없습니다.</div>`;
+    return;
+  }
+  el.innerHTML = list.map(p => {
+    const date = p.createdAt ? new Date(p.createdAt.seconds * 1000) : new Date();
+    const displayName = p.anonymous ? '익명' : (p.authorName || '회원');
+    const canManage = isAdmin || (currentUser && p.authorUid === currentUser.uid);
+    return `<div class="notice-card" onclick="openPostDetail('${p.id}')">
+      <div class="flex-between mb-1">
+        <strong style="font-size:14px">${p.title}</strong>
+        <div class="flex" style="gap:4px">
+          ${canManage ? `<button class="btn btn-sm" onclick="event.stopPropagation();openEditPost('${p.id}')"><i class="ti ti-edit"></i></button>
+          <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deletePost('${p.id}')"><i class="ti ti-trash"></i></button>` : ''}
+        </div>
+      </div>
+      <div style="font-size:13px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px">${p.content}</div>
+      <div style="font-size:11px;color:var(--text3);display:flex;gap:8px;align-items:center">
+        <span>${displayName} · ${formatDate(date)}</span>
+        <span><i class="ti ti-message-circle" style="font-size:11px;vertical-align:-1px"></i> ${p.commentCount||0}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+window.openAddPost = function() {
+  const isSuggestion = currentBoardType === 'suggestion';
+  openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>${isSuggestion?'건의사항':'자유게시판'} 글쓰기</div>
+    <div class="form-group"><label>제목</label><input type="text" id="p-title" placeholder="제목을 입력하세요" autofocus></div>
+    <div class="form-group"><label>내용</label><textarea id="p-content" placeholder="내용을 입력하세요" style="min-height:140px"></textarea></div>
+    ${isSuggestion?`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-bottom:12px"><input type="checkbox" id="p-anon"> 익명으로 작성</label>`:''}
+    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="addPost()">등록</button></div>`);
+};
+
+window.addPost = async function() {
+  const title = document.getElementById('p-title').value.trim();
+  const content = document.getElementById('p-content').value.trim();
+  if (!title || !content) { alert('제목과 내용을 입력해주세요.'); return; }
+  const anon = document.getElementById('p-anon')?.checked || false;
+  await addDoc(collection(db, 'posts'), {
+    type: currentBoardType, title, content,
+    anonymous: anon,
+    authorName: authorDisplayName(),
+    authorUid: currentUser.uid,
+    authorEmail: currentUser.email,
+    commentCount: 0,
+    createdAt: serverTimestamp(),
+  });
+  closeModal();
+};
+
+window.openEditPost = function(id) {
+  const p = posts.find(x => x.id === id);
+  if (!p) return;
+  openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>글 수정</div>
+    <div class="form-group"><label>제목</label><input type="text" id="ep-title" value="${p.title}"></div>
+    <div class="form-group"><label>내용</label><textarea id="ep-content" style="min-height:140px">${p.content}</textarea></div>
+    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editPost('${id}')">저장</button></div>`);
+};
+
+window.editPost = async function(id) {
+  const title = document.getElementById('ep-title').value.trim();
+  const content = document.getElementById('ep-content').value.trim();
+  if (!title || !content) { alert('제목과 내용을 입력해주세요.'); return; }
+  await updateDoc(doc(db, 'posts', id), {title, content});
+  closeModal();
+};
+
+window.deletePost = async function(id) {
+  const p = posts.find(x => x.id === id);
+  if (!p || !confirm(`"${p.title}" 글을 삭제할까요?`)) return;
+  await deleteDoc(doc(db, 'posts', id));
+};
+
+window.openPostDetail = async function(id) {
+  currentPostId = id;
+  document.getElementById('board-list').style.display = 'none';
+  const wrap = document.getElementById('board-detail');
+  wrap.style.display = '';
+  wrap.innerHTML = `<div style="font-size:13px;color:var(--text2)">불러오는 중...</div>`;
+  await loadComments(id);
+  renderPostDetail();
+};
+
+async function loadComments(postId) {
+  const snap = await getDocs(query(collection(db, 'posts', postId, 'comments'), orderBy('createdAt', 'asc')));
+  postComments = snap.docs.map(d => ({id: d.id, ...d.data()}));
+}
+
+function renderPostDetail() {
+  const p = posts.find(x => x.id === currentPostId);
+  const wrap = document.getElementById('board-detail');
+  if (!p || !wrap) return;
+  const date = p.createdAt ? new Date(p.createdAt.seconds * 1000) : new Date();
+  const displayName = p.anonymous ? '익명' : (p.authorName || '회원');
+  wrap.innerHTML = `
+    <button class="btn btn-sm" style="margin-bottom:12px" onclick="closePostDetail()"><i class="ti ti-arrow-left"></i> 목록으로</button>
+    <div class="notice-card" style="cursor:default">
+      <div style="font-size:17px;font-weight:500;margin-bottom:6px">${p.title}</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:14px">${displayName} · ${formatDate(date)}</div>
+      <div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${p.content}</div>
+    </div>
+    <div style="margin-top:16px">
+      <div style="font-size:13px;font-weight:500;margin-bottom:10px">댓글 ${postComments.length}개</div>
+      <div id="comment-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+        ${postComments.length===0?'<div style="font-size:13px;color:var(--text2)">첫 댓글을 남겨보세요.</div>':postComments.map(c=>{
+          const cdate = c.createdAt ? new Date(c.createdAt.seconds*1000) : new Date();
+          const canDel = isAdmin || (currentUser && c.authorUid === currentUser.uid);
+          return `<div style="background:var(--bg2);border-radius:var(--radius);padding:10px 12px">
+            <div class="flex-between"><span style="font-size:12px;font-weight:500">${c.authorName}</span>
+            ${canDel?`<button class="btn btn-sm" style="padding:2px 6px" onclick="deleteComment('${c.id}')"><i class="ti ti-trash" style="font-size:12px"></i></button>`:''}</div>
+            <div style="font-size:13px;margin-top:4px;white-space:pre-wrap">${c.content}</div>
+            <div style="font-size:10px;color:var(--text3);margin-top:4px">${formatDate(cdate)}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="flex" style="gap:8px">
+        <input type="text" id="comment-input" placeholder="댓글을 입력하세요" style="flex:1" onkeydown="if(event.key==='Enter')addComment()">
+        <button class="btn btn-primary btn-sm" onclick="addComment()">등록</button>
+      </div>
+    </div>`;
+}
+
+window.closePostDetail = function() {
+  currentPostId = null;
+  document.getElementById('board-detail').style.display = 'none';
+  document.getElementById('board-list').style.display = '';
+};
+
+window.addComment = async function() {
+  const input = document.getElementById('comment-input');
+  const content = input.value.trim();
+  if (!content) return;
+  await addDoc(collection(db, 'posts', currentPostId, 'comments'), {
+    content,
+    authorName: authorDisplayName(),
+    authorUid: currentUser.uid,
+    createdAt: serverTimestamp(),
+  });
+  await updateDoc(doc(db, 'posts', currentPostId), {commentCount: postComments.length + 1});
+  input.value = '';
+  await loadComments(currentPostId);
+  renderPostDetail();
+};
+
+window.deleteComment = async function(commentId) {
+  if (!confirm('댓글을 삭제할까요?')) return;
+  await deleteDoc(doc(db, 'posts', currentPostId, 'comments', commentId));
+  await updateDoc(doc(db, 'posts', currentPostId), {commentCount: Math.max(0, postComments.length - 1)});
+  await loadComments(currentPostId);
+  renderPostDetail();
+};
+
 // ── 회원 CRUD ─────────────────────────────────────────────────────
 window.openAddMember = function() {
   openModal(`<div class="modal-title"><i class="ti ti-user-plus" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>회원 추가</div>
@@ -268,6 +446,115 @@ window.deleteMember = async function(id) {
 
 window.toggleContact = async function(id, val) {
   await updateDoc(doc(db, 'members', id), {contacted: val});
+};
+
+// ── 프로필 연동 (계정 ↔ 회원 매칭) ──────────────────────────────────
+function getMyMember() {
+  if (!currentUser) return null;
+  return members.find(m => m.linkedUid === currentUser.uid) || null;
+}
+
+function checkProfileLink() {
+  if (!currentUser || isAdmin) return;
+  const me = getMyMember();
+  if (me) return;
+  const pending = members.find(m => m.linkPendingUid === currentUser.uid);
+  if (pending) return;
+  openLinkProfileModal();
+}
+
+function openLinkProfileModal() {
+  const unlinked = members.filter(m => !m.linkedUid && !m.linkPendingUid);
+  openModal(`<div class="modal-title"><i class="ti ti-user-circle" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>내 프로필 연결</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.7">처음 로그인하셨네요! 명단에서 본인 이름을 선택해주세요.<br>운영진 확인 후 연결이 확정됩니다.</div>
+    <div class="form-group"><label>본인 이름 선택</label>
+      <select id="link-member-select"><option value="">선택하세요</option>
+      ${unlinked.map(m=>`<option value="${m.id}">${m.name}</option>`).join('')}
+      </select>
+    </div>
+    ${unlinked.length===0?'<div class="alert alert-info" style="margin-bottom:12px">연결 가능한 명단이 없습니다. 운영진에게 문의해주세요.</div>':''}
+    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">나중에</button><button class="btn btn-primary" onclick="requestProfileLink()">연결 요청</button></div>`);
+}
+window.openLinkProfileModal = openLinkProfileModal;
+
+window.requestProfileLink = async function() {
+  const id = document.getElementById('link-member-select').value;
+  if (!id) { alert('이름을 선택해주세요.'); return; }
+  await updateDoc(doc(db, 'members', id), {
+    linkPendingUid: currentUser.uid,
+    linkPendingEmail: currentUser.email,
+    linkPendingName: currentUser.displayName || currentUser.email,
+  });
+  closeModal();
+  alert('연결 요청이 전송되었습니다. 운영진 확인 후 적용됩니다.');
+};
+
+window.approveProfileLink = async function(id) {
+  const m = members.find(x => x.id === id);
+  if (!m || !m.linkPendingUid) return;
+  if (!confirm(`"${m.name}" 회원을 ${m.linkPendingName}(${m.linkPendingEmail}) 계정과 연결할까요?`)) return;
+  await updateDoc(doc(db, 'members', id), {
+    linkedUid: m.linkPendingUid,
+    linkPendingUid: null, linkPendingEmail: null, linkPendingName: null,
+  });
+};
+
+window.rejectProfileLink = async function(id) {
+  const m = members.find(x => x.id === id);
+  if (!m || !confirm('연결 요청을 거부할까요?')) return;
+  await updateDoc(doc(db, 'members', id), {linkPendingUid: null, linkPendingEmail: null, linkPendingName: null});
+};
+
+window.unlinkProfile = async function(id) {
+  const m = members.find(x => x.id === id);
+  if (!m || !confirm(`"${m.name}" 회원의 계정 연결을 해제할까요?`)) return;
+  await updateDoc(doc(db, 'members', id), {linkedUid: null});
+};
+
+// ── 프로필 커스텀 (본인만 수정 가능) ────────────────────────────────
+window.openEditMyProfile = function(id) {
+  const m = members.find(x => x.id === id);
+  if (!m || !currentUser || m.linkedUid !== currentUser.uid) { alert('본인 프로필만 수정할 수 있습니다.'); return; }
+  openModal(`<div class="modal-title"><i class="ti ti-user-circle" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>내 프로필 수정</div>
+    <div class="form-group"><label>닉네임</label><input type="text" id="mp-name" value="${m.name}"></div>
+    <div class="form-group"><label>프로필 사진</label>
+      <div class="flex" style="gap:10px;align-items:center">
+        ${m.photoURL?`<img src="${m.photoURL}" style="width:44px;height:44px;border-radius:50%;object-fit:cover">`:''}
+        <input type="file" id="mp-photo" accept="image/*" style="flex:1">
+      </div>
+    </div>
+    <div class="form-group"><label>한줄소개</label><input type="text" id="mp-bio" value="${m.bio||''}" placeholder="나를 소개해보세요" maxlength="60"></div>
+    <div class="form-row">
+      <div class="form-group"><label>최애 아티스트</label><input type="text" id="mp-artist" value="${m.favArtist||''}" placeholder="예: 요네즈 켄시"></div>
+      <div class="form-group"><label>최애곡</label><input type="text" id="mp-song" value="${m.favSong||''}" placeholder="예: Lemon"></div>
+    </div>
+    <div id="mp-status" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
+    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="saveMyProfile('${id}')">저장</button></div>`);
+};
+
+window.saveMyProfile = async function(id) {
+  const m = members.find(x => x.id === id);
+  if (!m || !currentUser || m.linkedUid !== currentUser.uid) return;
+  const name = document.getElementById('mp-name').value.trim();
+  if (!name) { alert('닉네임을 입력해주세요.'); return; }
+  const bio = document.getElementById('mp-bio').value.trim();
+  const favArtist = document.getElementById('mp-artist').value.trim();
+  const favSong = document.getElementById('mp-song').value.trim();
+  const file = document.getElementById('mp-photo').files[0];
+  const statusEl = document.getElementById('mp-status');
+  const updates = {name, bio, favArtist, favSong};
+  try {
+    if (file) {
+      statusEl.textContent = '사진 업로드 중...';
+      const storageRef = ref(storage, `profiles/${id}_${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      updates.photoURL = await getDownloadURL(storageRef);
+    }
+    await updateDoc(doc(db, 'members', id), updates);
+    closeModal();
+  } catch(e) {
+    statusEl.textContent = '저장 실패: ' + e.message;
+  }
 };
 
 // ── 벙 CRUD ───────────────────────────────────────────────────────
@@ -492,6 +779,20 @@ function getMemberStats() {
   }).sort((a,b) => b.rate-a.rate || b.attended-a.attended);
 }
 
+function getRecentMemberStats() {
+  const cd = getCalcDate();
+  const twoMonthsAgo = new Date(cd);
+  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth()-2);
+  const recentBungs = bungs.filter(b => new Date(b.date) >= twoMonthsAgo && new Date(b.date) <= TODAY);
+  const totalBungs = recentBungs.length;
+  return members.map(m => {
+    const attended = recentBungs.filter(b => (b.attendees||[]).includes(m.id)).length;
+    const rate = totalBungs > 0 ? Math.round(attended/totalBungs*100) : 0;
+    const grade = getMemberGrade(rate);
+    return {...m, attended, rate, grade};
+  }).sort((a,b) => b.rate-a.rate || b.attended-a.attended);
+}
+
 function getAchievements(m) {
   const attended = bungs.filter(b => (b.attendees||[]).includes(m.id));
   const jeongmoAttended = bungs.filter(b => (b.attendees||[]).includes(m.id) && b.type==='정모');
@@ -534,6 +835,7 @@ function renderAll() {
   renderDashboardAlerts();
   renderDashboardAchievements();
   renderMembers();
+  renderLinkRequests();
   renderBungs();
   renderGhost();
   renderStats();
@@ -768,6 +1070,23 @@ function renderDashboardAchievements() {
   }
 }
 
+function renderLinkRequests() {
+  const el = document.getElementById('link-requests-area');
+  if (!el) return;
+  const pending = members.filter(m => m.linkPendingUid);
+  if (pending.length === 0) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="alert alert-info" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:1rem">
+    <div style="font-weight:500"><i class="ti ti-user-plus"></i> 프로필 연결 요청 (${pending.length}건)</div>
+    ${pending.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border-radius:var(--radius);padding:8px 12px">
+      <span style="font-size:13px">"<strong>${m.linkPendingName}</strong>"님이 <strong>${m.name}</strong> 회원으로 연결을 요청했습니다.</span>
+      <div class="flex" style="gap:6px;flex-shrink:0">
+        <button class="btn btn-sm btn-primary" onclick="approveProfileLink('${m.id}')">승인</button>
+        <button class="btn btn-sm btn-danger" onclick="rejectProfileLink('${m.id}')">거부</button>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
 function renderMembers() {
   const cd = getCalcDate();
   const tbody = document.getElementById('member-tbody');
@@ -794,7 +1113,8 @@ function renderMembers() {
     const grade = getMemberGrade(rate);
     const gradeBadge = `<span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${grade.bg};color:${grade.color};font-weight:500">${grade.label}</span>`;
     const memo = m.memo?`<div class="memo-text">📝 ${m.memo}</div>`:'<span style="color:var(--text3);font-size:12px">-</span>';
-    return `<tr${rc}><td><strong>${m.name}</strong></td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'<span style="color:var(--text2)">없음</span>'}</td><td style="text-align:center"><input type="checkbox" class="contact-check" ${m.contacted?'checked':''} onchange="toggleContact('${m.id}',this.checked)" ${isAdmin?'':' disabled'}></td><td>${badgeMap[status]}</td><td>${gradeBadge}</td><td>${memo}</td><td class="edit-only"><div class="flex" style="gap:4px"><button class="btn btn-sm" onclick="openEditMember('${m.id}')"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-danger" onclick="deleteMember('${m.id}')"><i class="ti ti-trash"></i></button></div></td></tr>`;
+    const linkBadge = m.linkedUid ? `<i class="ti ti-link" style="color:var(--success);font-size:12px;margin-left:4px" title="계정 연결됨"></i>` : '';
+    return `<tr${rc}><td><strong>${m.name}</strong>${linkBadge}</td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'<span style="color:var(--text2)">없음</span>'}</td><td style="text-align:center"><input type="checkbox" class="contact-check" ${m.contacted?'checked':''} onchange="toggleContact('${m.id}',this.checked)" ${isAdmin?'':' disabled'}></td><td>${badgeMap[status]}</td><td>${gradeBadge}</td><td>${memo}</td><td class="edit-only"><div class="flex" style="gap:4px"><button class="btn btn-sm" onclick="openEditMember('${m.id}')"><i class="ti ti-edit"></i></button>${m.linkedUid?`<button class="btn btn-sm" onclick="unlinkProfile('${m.id}')" title="연결 해제"><i class="ti ti-unlink"></i></button>`:''}<button class="btn btn-sm btn-danger" onclick="deleteMember('${m.id}')"><i class="ti ti-trash"></i></button></div></td></tr>`;
   }).join('');
 }
 
@@ -873,30 +1193,35 @@ function renderGhost() {
 function renderStats() {
   const el = document.getElementById('stats-content');
   if (!el) return;
-  const totalBungs = bungs.length;
-  const stats = getMemberStats();
-  if (totalBungs===0||members.length===0) { el.innerHTML='<div class="empty-state"><i class="ti ti-chart-bar"></i>벙과 회원 데이터가 있어야 통계를 볼 수 있어요.</div>'; return; }
-  const top3 = stats.slice(0,3);
+  const cd = getCalcDate();
+  const twoMonthsAgo = new Date(cd);
+  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth()-2);
+  const recentBungCount = bungs.filter(b => new Date(b.date) >= twoMonthsAgo && new Date(b.date) <= TODAY).length;
+  const stats = getRecentMemberStats();
+  if (members.length===0) { el.innerHTML='<div class="empty-state"><i class="ti ti-chart-bar"></i>벙과 회원 데이터가 있어야 통계를 볼 수 있어요.</div>'; return; }
+  if (recentBungCount===0) { el.innerHTML='<div class="empty-state"><i class="ti ti-chart-bar"></i>최근 2개월간 진행된 벙이 없어요.<br><span style="font-size:12px">전체 역대 기록은 명예의 전당에서 확인하세요.</span></div>'; return; }
+  const top3 = stats.filter(s=>s.attended>0).slice(0,3);
   const medals = ['🥇','🥈','🥉'];
   const gradeCount = {우수:stats.filter(s=>s.rate>=60).length, 활동:stats.filter(s=>s.rate>=20&&s.rate<60).length, 일반:stats.filter(s=>s.rate<20).length};
   el.innerHTML = `
+  <div class="alert alert-info" style="margin-bottom:1.25rem"><i class="ti ti-info-circle"></i>최근 2개월(${formatDate(twoMonthsAgo)} ~ ${formatDate(TODAY)}, 유령 판정 기준과 동일) 활동성 통계입니다. 전체 역대 기록은 <strong>명예의 전당</strong>을 확인하세요.</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:1.5rem">
-    <div class="metric"><div class="metric-label">총 벙 횟수</div><div class="metric-value">${totalBungs}회</div></div>
+    <div class="metric"><div class="metric-label">최근 2개월 벙</div><div class="metric-value">${recentBungCount}회</div></div>
     <div class="metric"><div class="metric-label">⭐ 우수</div><div class="metric-value" style="color:var(--success)">${gradeCount.우수}명</div></div>
     <div class="metric"><div class="metric-label">✅ 활동</div><div class="metric-value" style="color:var(--info)">${gradeCount.활동}명</div></div>
     <div class="metric"><div class="metric-label">👤 일반</div><div class="metric-value" style="color:var(--text2)">${gradeCount.일반}명</div></div>
   </div>
-  <div style="margin-bottom:1.5rem"><h3>🏆 참여율 랭킹 TOP 3</h3>
+  <div style="margin-bottom:1.5rem"><h3>🔥 최근 2개월 참여율 TOP 3</h3>
     <div style="display:flex;flex-direction:column;gap:8px">
-      ${top3.map((s,i)=>`<div style="display:flex;align-items:center;gap:12px;background:var(--bg2);border-radius:var(--radius-lg);padding:10px 16px">
+      ${top3.length===0?'<div style="font-size:13px;color:var(--text2)">최근 2개월 참여 기록이 없습니다.</div>':top3.map((s,i)=>`<div style="display:flex;align-items:center;gap:12px;background:var(--bg2);border-radius:var(--radius-lg);padding:10px 16px">
         <span style="font-size:20px">${medals[i]}</span>
         <div style="flex:1"><div style="font-weight:500">${s.name} <span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${s.grade.bg};color:${s.grade.color};font-weight:500">${s.grade.label}</span></div>
-        <div style="font-size:12px;color:var(--text2);margin-top:2px">${s.attended}회 / 전체 ${totalBungs}회</div></div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">${s.attended}회 / 최근 ${recentBungCount}회</div></div>
         <div style="font-size:20px;font-weight:500;color:${s.grade.color}">${s.rate}%</div>
       </div>`).join('')}
     </div>
   </div>
-  <div><h3>전체 회원 참여율</h3>
+  <div><h3>전체 회원 최근 2개월 참여율</h3>
     <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
       <table><thead><tr><th>순위</th><th>이름</th><th>등급</th><th>참석</th><th>참여율</th><th>그래프</th></tr></thead><tbody>
       ${stats.map((s,i)=>`<tr><td style="color:var(--text2)">${i+1}</td><td><strong>${s.name}</strong></td>
@@ -906,7 +1231,7 @@ function renderStats() {
       </tr>`).join('')}
       </tbody></table>
     </div>
-    <div style="font-size:12px;color:var(--text2);margin-top:8px">등급 기준: ⭐ 우수 60% 이상 | ✅ 활동 20~59% | 👤 일반 20% 미만</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:8px">등급 기준: ⭐ 우수 60% 이상 | ✅ 활동 20~59% | 👤 일반 20% 미만 (최근 2개월 기준)</div>
   </div>`;
 }
 
@@ -1147,15 +1472,22 @@ function renderMemberProfile(id) {
   }
   const maxMonthly=Math.max(...monthlyData.map(d=>d.total),1);
   const attendedBungs=[...attended].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const isMyProfile = currentUser && m.linkedUid === currentUser.uid;
   el.innerHTML=`
-  <div style="margin-bottom:12px"><button class="btn btn-sm" onclick="selectedMemberId=null;renderProfileList()"><i class="ti ti-arrow-left"></i> 목록으로</button></div>
+  <div style="margin-bottom:12px;display:flex;justify-content:space-between"><button class="btn btn-sm" onclick="selectedMemberId=null;renderProfileList()"><i class="ti ti-arrow-left"></i> 목록으로</button>
+  ${isMyProfile?`<button class="btn btn-sm btn-primary" onclick="openEditMyProfile('${m.id}')"><i class="ti ti-edit"></i> 내 프로필 수정</button>`:''}</div>
   <div class="profile-card">
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
-      <div class="profile-avatar">${m.name[0]}</div>
+      ${m.photoURL?`<img src="${m.photoURL}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;flex-shrink:0">`:`<div class="profile-avatar">${m.name[0]}</div>`}
       <div><div style="font-size:20px;font-weight:500">${m.name}</div>
       <div style="margin-top:4px"><span style="font-size:12px;padding:3px 10px;border-radius:20px;background:${grade.bg};color:${grade.color};font-weight:500">${grade.label}</span></div>
       ${m.memo?`<div style="font-size:12px;color:var(--text2);margin-top:6px">📝 ${m.memo}</div>`:''}
     </div></div>
+    ${m.bio?`<div style="font-size:13px;line-height:1.7;background:var(--bg2);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px">${m.bio}</div>`:''}
+    ${(m.favSong||m.favArtist)?`<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin-bottom:12px">
+      ${m.favArtist?`<span><i class="ti ti-microphone-2" style="color:var(--purple)"></i> 최애 아티스트: <strong style="color:var(--text)">${m.favArtist}</strong></span>`:''}
+      ${m.favSong?`<span><i class="ti ti-music" style="color:var(--info)"></i> 최애곡: <strong style="color:var(--text)">${m.favSong}</strong></span>`:''}
+    </div>`:''}
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
       <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center"><div style="font-size:20px;font-weight:500;color:var(--info)">${rate}%</div><div style="font-size:11px;color:var(--text2);margin-top:2px">참여율</div></div>
       <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center"><div style="font-size:20px;font-weight:500">${attended.length}</div><div style="font-size:11px;color:var(--text2);margin-top:2px">참석 벙</div></div>
@@ -1207,6 +1539,7 @@ function renderMemberProfile(id) {
 }
 
 const UPDATES=[
+  {version:'v2.1',date:'2026.06.18',items:['게시판 기능 추가 — 자유게시판, 건의사항(익명 가능), 댓글 기능','회원 프로필 ↔ 구글 계정 연결 시스템 (운영진 승인 방식)','프로필 커스텀 — 닉네임, 사진, 한줄소개, 최애곡/아티스트 (본인만 수정 가능)','통계 탭 기준을 최근 2개월 활동성으로 변경, 명예의 전당(전체 역대)과 역할 구분']},
   {version:'v2.0',date:'2026.06.17',items:['Firebase 전환 — 실시간 동기화, 회원별 Google 로그인','공지사항 탭 추가 — 작성/수정/삭제, 상단 고정, 중요 표시','운영진/일반 회원 권한 분리','Firebase Storage로 갤러리 전환']},
   {version:'v1.7',date:'2026.06.17',items:['캘린더 탭 추가','회원 프로필 탭 추가']},
   {version:'v1.6',date:'2026.06.17',items:['명예의 전당 강화 — 스트릭 랭킹, 벙주 랭킹, 월별 MVP']},
@@ -1226,12 +1559,13 @@ function renderUpdates() {
 // ── 공통 UI ───────────────────────────────────────────────────────
 window.switchTab = function(tab) {
   document.querySelectorAll('.nav-item').forEach((t,i)=>t.classList.toggle('active',
-    ['dashboard','notice','members','bung','ghost','stats','report','hall','calendar','profile','gallery','updates'][i]===tab));
+    ['dashboard','notice','board','members','bung','ghost','stats','report','hall','calendar','profile','gallery','updates'][i]===tab));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+tab).classList.add('active');
   if(tab==='gallery') loadGallery();
   if(tab==='calendar') renderCalendar();
   if(tab==='profile') renderProfileList();
+  if(tab==='board') renderBoardList();
 };
 
 window.filterMembers = function(q) {
