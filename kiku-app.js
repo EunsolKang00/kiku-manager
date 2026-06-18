@@ -23,7 +23,7 @@ let currentUser = null;
 let isAdmin = false;
 
 const TODAY = new Date();
-let members = [], bungs = [], notices = [], playlist = [];
+let members = [], bungs = [], notices = [], playlist = [], seasonAwards = [];
 let posts = [], currentBoardType = 'free', currentPostId = null, postComments = [];
 let postImageFiles = [], editPostImageFiles = [], editPostExistingImages = [];
 let nextMemberId = 1, nextBungId = 1;
@@ -157,6 +157,7 @@ async function loadData() {
       nextMemberId = members.length > 0 ? Math.max(...members.map(m => parseInt(m.numId)||0)) + 1 : 1;
       refreshAdminStatus();
       renderAll();
+      checkAndFinalizeSeasonAwards();
     });
     const bungUnsub = onSnapshot(query(collection(db, 'bungs'), orderBy('date', 'desc')), snap => {
       bungs = snap.docs.map(d => ({id: d.id, ...d.data()}));
@@ -178,7 +179,12 @@ async function loadData() {
       renderTodaySong();
       renderPlaylistManager();
     });
-    unsubscribers = [memberUnsub, bungUnsub, noticeUnsub, postUnsub, playlistUnsub];
+    const seasonAwardUnsub = onSnapshot(collection(db, 'seasonAwards'), snap => {
+      seasonAwards = snap.docs.map(d => ({id: d.id, ...d.data()}));
+      renderDashboardAchievements();
+      checkAndFinalizeSeasonAwards();
+    });
+    unsubscribers = [memberUnsub, bungUnsub, noticeUnsub, postUnsub, playlistUnsub, seasonAwardUnsub];
     setSyncStatus('connected', '실시간 동기화 중');
   } catch(e) {
     setSyncStatus('disconnected', '연결 실패: ' + e.message);
@@ -697,6 +703,7 @@ window.openEditMember = function(id) {
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>회원 수정 — ${m.name}</div>
     <div class="form-row"><div class="form-group"><label>이름</label><input type="text" id="e-name" value="${m.name}"></div><div class="form-group"><label>가입일</label><input type="date" id="e-join" value="${m.joinDate}"></div></div>
     <div class="form-group"><label>최근 참여일</label><input type="date" id="e-attend" value="${m.lastAttend||''}"></div>
+    <div class="form-group"><label>생일 (선택)</label><input type="date" id="e-birthday" value="${m.birthday||''}"></div>
     <div class="form-group"><label>메모</label><textarea id="e-memo">${m.memo||''}</textarea></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editMember('${id}')">저장</button></div>`);
 };
@@ -708,6 +715,7 @@ window.editMember = async function(id) {
     name: document.getElementById('e-name').value.trim() || m.name,
     joinDate: document.getElementById('e-join').value || m.joinDate,
     lastAttend: document.getElementById('e-attend').value || null,
+    birthday: document.getElementById('e-birthday').value || null,
     memo: document.getElementById('e-memo').value.trim(),
   });
   closeModal();
@@ -842,6 +850,7 @@ window.openEditMyProfile = function(id) {
       <div class="form-group"><label>최애 아티스트</label><input type="text" id="mp-artist" value="${m.favArtist||''}" placeholder="예: 요네즈 켄시"></div>
       <div class="form-group"><label>최애곡</label><input type="text" id="mp-song" value="${m.favSong||''}" placeholder="예: Lemon"></div>
     </div>
+    <div class="form-group"><label>생일 (선택)</label><input type="date" id="mp-birthday" value="${m.birthday||''}"></div>
     <div id="mp-status" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="saveMyProfile('${id}')">저장</button></div>`);
 };
@@ -854,9 +863,10 @@ window.saveMyProfile = async function(id) {
   const bio = document.getElementById('mp-bio').value.trim();
   const favArtist = document.getElementById('mp-artist').value.trim();
   const favSong = document.getElementById('mp-song').value.trim();
+  const birthday = document.getElementById('mp-birthday').value || null;
   const file = document.getElementById('mp-photo').files[0];
   const statusEl = document.getElementById('mp-status');
-  const updates = {name, bio, favArtist, favSong};
+  const updates = {name, bio, favArtist, favSong, birthday};
   try {
     if (file) {
       statusEl.textContent = '사진 업로드 중...';
@@ -908,13 +918,20 @@ window.addBung = async function() {
     topic: document.getElementById('b-topic').value.trim(),
     hostId: hostVal || null,
     memo: document.getElementById('b-memo').value.trim(),
+    createdAt: serverTimestamp(),
   });
   for (const id of attendees) {
     const m = members.find(x => x.id === id);
     if (m) {
+      // 부활 업적: 참석 등록 직전 유령 대상/경고 상태였다면 영구 플래그로 기록
+      const prevStatus = getMemberStatus(m, TODAY);
+      const wasGhostish = (prevStatus === 'ghost' || prevStatus === 'contacted');
       const cur = m.lastAttend ? new Date(m.lastAttend) : null;
       const d = new Date(date);
-      if (!cur || d > cur) await updateDoc(doc(db, 'members', id), {lastAttend: date});
+      const updates = {};
+      if (!cur || d > cur) updates.lastAttend = date;
+      if (wasGhostish && !m.revivedFromGhost) updates.revivedFromGhost = true;
+      if (Object.keys(updates).length > 0) await updateDoc(doc(db, 'members', id), updates);
     }
   }
   closeModal();
@@ -971,7 +988,14 @@ async function recalcLastAttend() {
       }
     });
     const newLast = last ? last.toISOString().slice(0,10) : null;
-    if (newLast !== m.lastAttend) await updateDoc(doc(db, 'members', m.id), {lastAttend: newLast});
+    const updates = {};
+    if (newLast !== m.lastAttend) updates.lastAttend = newLast;
+    // 부활 업적: lastAttend가 새로 갱신되는데 그 시점 상태가 유령/경고였다면 기록
+    if (updates.lastAttend) {
+      const prevStatus = getMemberStatus(m, TODAY);
+      if ((prevStatus === 'ghost' || prevStatus === 'contacted') && !m.revivedFromGhost) updates.revivedFromGhost = true;
+    }
+    if (Object.keys(updates).length > 0) await updateDoc(doc(db, 'members', m.id), updates);
   }
 }
 
@@ -1121,6 +1145,41 @@ function getAchievements(m) {
     if ((b.attendees||[]).includes(m.id)) { curStreak++; if (curStreak>maxStreak) maxStreak=curStreak; }
     else curStreak=0;
   });
+
+  // ── 히든 업적 계산용 데이터 ──
+  const myPosts = posts.filter(p => p.authorUid === m.linkedUid);
+  const myPostDates = myPosts.map(p => p.createdAt ? new Date(p.createdAt.seconds*1000) : null).filter(Boolean);
+  const lateNightCount = myPostDates.filter(d => d.getHours() >= 0 && d.getHours() < 5).length;
+  const myBirthdayAttend = m.birthday ? attended.some(b => {
+    const bd = new Date(b.date), birth = new Date(m.birthday);
+    return bd.getMonth()===birth.getMonth() && bd.getDate()===birth.getDate();
+  }) : false;
+  const maxCommentCount = myPosts.length>0 ? Math.max(...myPosts.map(p=>p.commentCount||0)) : 0;
+  const photoFullPosts = myPosts.filter(p => (p.images||[]).length>=4).length;
+  const anonSuggestions = posts.filter(p => p.type==='suggestion' && p.anonymous && p.authorUid===m.linkedUid).length;
+  const earlyMemberCutoff = bungs.length>0 ? new Date(Math.min(...bungs.map(b=>new Date(b.date)))) : null;
+  let isFoundingMember = false;
+  if (earlyMemberCutoff) {
+    const cutoff = new Date(earlyMemberCutoff); cutoff.setMonth(cutoff.getMonth()+3);
+    isFoundingMember = joinDate <= cutoff;
+  }
+  const mySongPosts = posts.filter(p => p.type==='song' && p.authorUid===m.linkedUid && p.songName);
+  const songNameCounts = {};
+  mySongPosts.forEach(p => { const key=(p.songName||'').trim().toLowerCase(); if(key) songNameCounts[key]=(songNameCounts[key]||0)+1; });
+  const hasRepeatSong = Object.values(songNameCounts).some(c=>c>=2);
+
+  const hidden = [
+    {id:'h_dawn', icon:'🌙', label:'새벽의 전설', desc:'밤 12시~5시 사이 글/댓글 3회 이상 작성', unlocked: lateNightCount>=3, hidden:true},
+    {id:'h_birthday', icon:'🎂', label:'생일 출석', desc:'본인 생일에 벙 참석', unlocked: myBirthdayAttend, hidden:true},
+    {id:'h_revive', icon:'👻', label:'유령에서 부활', desc:'유령 판정 후 다시 돌아온 회원', unlocked: !!m.revivedFromGhost, hidden:true},
+    {id:'h_feed', icon:'🗣️', label:'떡밥 제조기', desc:'내 글에 댓글 10개 이상 달림', unlocked: maxCommentCount>=10, hidden:true},
+    {id:'h_photo', icon:'📸', label:'사진 부자', desc:'사진 4장 채운 글 3개 이상', unlocked: photoFullPosts>=3, hidden:true},
+    {id:'h_anon', icon:'🤐', label:'익명의 건의자', desc:'건의사항 익명으로 3회 이상 작성', unlocked: anonSuggestions>=3, hidden:true},
+    {id:'h_founder', icon:'🥇', label:'창립 멤버', desc:'소모임 초창기(첫 3개월 이내) 가입', unlocked: isFoundingMember, hidden:true},
+    {id:'h_repeat', icon:'🔁', label:'돌고 돌아', desc:'같은 곡을 2번 이상 추천', unlocked: hasRepeatSong, hidden:true},
+    {id:'h_allrounder', icon:'💌', label:'전방위 멤버', desc:'정모·번개 모두 참석 + 게시글 작성 + 벙주까지 모두 경험', unlocked: jeongmoAttended.length>=1 && attended.some(b=>b.type==='번개') && myPosts.length>=1 && hostedBungs.length>=1, hidden:true},
+  ];
+
   return [
     {id:'first', icon:'🎤', label:'첫 발걸음', desc:'첫 벙 참석', unlocked:attended.length>=1},
     {id:'streak3', icon:'🔥', label:'3연속 개근', desc:'3번 연속 참석', unlocked:maxStreak>=3},
@@ -1129,6 +1188,7 @@ function getAchievements(m) {
     {id:'master', icon:'💎', label:'개근왕', desc:'참여율 80% 이상', unlocked:rate>=80},
     {id:'anniv', icon:'🌟', label:'1주년 멤버', desc:'가입 1년 이상', unlocked:yearsDiff>=1},
     {id:'jeongmo5', icon:'🏆', label:'정모 마스터', desc:'정모 5회 이상 참석', unlocked:jeongmoAttended.length>=5},
+    ...hidden,
   ];
 }
 
@@ -1141,6 +1201,170 @@ function getGroupAchievements() {
     {icon:'👥', label:'회원 20명 돌파', unlocked:members.length>=20},
     {icon:'🎵', label:'참석 100명 돌파', unlocked:totalAttend>=100},
   ];
+}
+
+// ── 시즌 업적 (매달 칭호, 한번 확정되면 명예의 전당에 영구 기록) ──────────
+const SEASON_AWARD_DEFS = [
+  {id:'pioneer', icon:'🥇', label:'이달의 선구자', desc:'이번 달 첫 곡 추천'},
+  {id:'latecomer', icon:'🐢', label:'막차 탑승', desc:'벙 마감 직전 신청'},
+  {id:'planner', icon:'📅', label:'이달의 기획자', desc:'이번 달 벙주 최다 담당'},
+  {id:'hottrack', icon:'🎤', label:'이달의 핫트랙', desc:'이번 달 가장 많이 추천된 곡의 추천자'},
+  {id:'chatty', icon:'💬', label:'이달의 수다왕', desc:'이번 달 게시글+댓글 합산 최다'},
+  {id:'sprout', icon:'🌱', label:'이달의 새싹', desc:'이번 달 가입 후 가장 빨리 첫 벙 참석한 신규 회원'},
+];
+
+function ymKey(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+
+// 특정 연-월(ym) 동안의 시즌 업적 수상자를 계산. 데이터 부족 시 해당 항목은 null.
+function calcSeasonAwardsForMonth(ym) {
+  const monthPosts = posts.filter(p => {
+    if (!p.createdAt) return false;
+    const d = new Date(p.createdAt.seconds*1000);
+    return ymKey(d) === ym;
+  });
+  const monthBungs = bungs.filter(b => b.date && b.date.startsWith(ym));
+  const result = {};
+
+  // 1. 이달의 선구자 — 이번 달 첫 곡 추천 게시물 작성자
+  const songPosts = monthPosts.filter(p => p.type === 'song' && p.songName)
+    .sort((a,b) => a.createdAt.seconds - b.createdAt.seconds);
+  if (songPosts.length > 0) {
+    const p = songPosts[0];
+    result.pioneer = {uid: p.authorUid, name: p.anonymous ? '익명' : (p.authorName||'회원')};
+  }
+
+  // 2. 막차 탑승 — 이번 달 벙 중 "공지일 ~ 벙 날짜" 간격이 가장 짧았던(=급하게 잡힌) 벙에 참석한 회원 중,
+  //    평소 참여율이 가장 낮은 회원에게 부여 (급벙에도 와준 의외의 참석자라는 의미)
+  const bungsWithCreatedAt = monthBungs.filter(b => b.createdAt);
+  if (bungsWithCreatedAt.length > 0) {
+    const shortest = [...bungsWithCreatedAt].sort((a,b) => {
+      const gapA = new Date(a.date) - new Date(a.createdAt.seconds*1000);
+      const gapB = new Date(b.date) - new Date(b.createdAt.seconds*1000);
+      return gapA - gapB;
+    })[0];
+    const attendees = (shortest.attendees||[]);
+    if (attendees.length > 0) {
+      const totalBungsCount = bungs.length;
+      const candidates = attendees.map(id => {
+        const mm = members.find(x=>x.id===id);
+        if (!mm) return null;
+        const cnt = bungs.filter(b=>(b.attendees||[]).includes(id)).length;
+        const rate = totalBungsCount>0 ? cnt/totalBungsCount : 0;
+        return {id, name: mm.name, uid: mm.linkedUid, rate};
+      }).filter(Boolean);
+      if (candidates.length > 0) {
+        candidates.sort((a,b)=>a.rate-b.rate);
+        result.latecomer = {uid: candidates[0].uid, name: candidates[0].name};
+      }
+    }
+  }
+
+  // 3. 이달의 기획자 — 이번 달 벙주 최다 담당
+  const hostCounts = {};
+  monthBungs.forEach(b => { if (b.hostId) hostCounts[b.hostId] = (hostCounts[b.hostId]||0)+1; });
+  const hostEntries = Object.entries(hostCounts).sort((a,b)=>b[1]-a[1]);
+  if (hostEntries.length > 0 && hostEntries[0][1] >= 1) {
+    const mm = members.find(x=>x.id===hostEntries[0][0]);
+    if (mm) result.planner = {uid: mm.linkedUid, name: mm.name, count: hostEntries[0][1]};
+  }
+
+  // 4. 이달의 핫트랙 — 이번 달 가장 많이 등록된 곡(중복 추천 포함) 추천자 중 첫 추천자
+  const songCounts = {};
+  songPosts.forEach(p => { const key=(p.songName||'').trim().toLowerCase(); if(key) songCounts[key]=(songCounts[key]||0)+1; });
+  const topSongEntries = Object.entries(songCounts).sort((a,b)=>b[1]-a[1]);
+  if (topSongEntries.length > 0 && topSongEntries[0][1] >= 1) {
+    const topSongKey = topSongEntries[0][0];
+    const firstPost = songPosts.find(p => (p.songName||'').trim().toLowerCase() === topSongKey);
+    if (firstPost) result.hottrack = {uid: firstPost.authorUid, name: firstPost.anonymous?'익명':(firstPost.authorName||'회원'), song: firstPost.songName};
+  }
+
+  // 5. 이달의 수다왕 — 이번 달 게시글+댓글 합산 최다 (댓글은 postComments 서브컬렉션이라 실시간 집계가 어려워 게시글 수로 근사)
+  const postCounts = {};
+  monthPosts.forEach(p => { if (p.authorUid) postCounts[p.authorUid] = (postCounts[p.authorUid]||0) + 1 + (p.commentCount||0); });
+  const chattyEntries = Object.entries(postCounts).sort((a,b)=>b[1]-a[1]);
+  if (chattyEntries.length > 0 && chattyEntries[0][1] >= 1) {
+    const samplePost = monthPosts.find(p => p.authorUid === chattyEntries[0][0]);
+    result.chatty = {uid: chattyEntries[0][0], name: samplePost?.anonymous?'익명':(samplePost?.authorName||'회원'), count: chattyEntries[0][1]};
+  }
+
+  // 6. 이달의 새싹 — 이번 달 가입한 회원 중 첫 벙 참석까지 걸린 기간이 가장 짧은 회원
+  const newMembers = members.filter(m => m.joinDate && ymKey(new Date(m.joinDate)) === ym);
+  if (newMembers.length > 0) {
+    const candidates = newMembers.map(m => {
+      const firstAttended = bungs.filter(b => (b.attendees||[]).includes(m.id))
+        .sort((a,b)=>new Date(a.date)-new Date(b.date))[0];
+      if (!firstAttended) return null;
+      const days = Math.round((new Date(firstAttended.date) - new Date(m.joinDate)) / (1000*60*60*24));
+      return {name: m.name, uid: m.linkedUid, days: Math.max(days,0)};
+    }).filter(Boolean);
+    if (candidates.length > 0) {
+      candidates.sort((a,b)=>a.days-b.days);
+      result.sprout = {uid: candidates[0].uid, name: candidates[0].name, days: candidates[0].days};
+    }
+  }
+
+  return result;
+}
+
+// 지난 달이 끝났는데 아직 확정 기록이 없으면 자동으로 1회 확정 저장 (운영진 로그인 시점에 체크)
+let seasonFinalizeChecking = false;
+async function checkAndFinalizeSeasonAwards() {
+  if (!isAdmin || seasonFinalizeChecking) return;
+  seasonFinalizeChecking = true;
+  try {
+    const lastMonthDate = new Date(TODAY.getFullYear(), TODAY.getMonth()-1, 1);
+    const lastYm = ymKey(lastMonthDate);
+    const alreadyDone = seasonAwards.some(s => s.ym === lastYm);
+    if (!alreadyDone) {
+      const awards = calcSeasonAwardsForMonth(lastYm);
+      if (Object.keys(awards).length > 0) {
+        await setDoc(doc(db, 'seasonAwards', lastYm), {ym: lastYm, awards, finalizedAt: serverTimestamp()});
+      }
+    }
+  } finally {
+    seasonFinalizeChecking = false;
+  }
+}
+
+// 현재 진행 중인 이번 달 시즌 업적 현황 (실시간, 미확정)
+function getCurrentSeasonAwards() {
+  return calcSeasonAwardsForMonth(ymKey(TODAY));
+}
+
+function renderSeasonAwardsCard() {
+  const thisYm = ymKey(TODAY);
+  const current = getCurrentSeasonAwards();
+  const pastRecords = [...seasonAwards].sort((a,b)=>b.ym.localeCompare(a.ym));
+  const currentHTML = SEASON_AWARD_DEFS.map(def => {
+    const a = current[def.id];
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border)">
+      <span style="font-size:20px">${def.icon}</span>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:500">${def.label}</div>
+        <div style="font-size:11px;color:var(--text2)">${def.desc}</div>
+      </div>
+      <div style="font-size:13px;font-weight:500;color:${a?'var(--warn)':'var(--text2)'}">${a?a.name:'아직 없음'}</div>
+    </div>`;
+  }).join('');
+  const historyHTML = pastRecords.length === 0 ? '' : `
+    <div style="font-size:12px;font-weight:500;color:var(--text2);margin:14px 0 8px">📜 지난 기록</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${pastRecords.map(rec => {
+        const items = SEASON_AWARD_DEFS.filter(def => rec.awards[def.id]).map(def => {
+          const a = rec.awards[def.id];
+          return `<span title="${def.label} · ${a.name}" style="font-size:13px;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:3px 9px">${def.icon} ${a.name}</span>`;
+        }).join('');
+        return `<div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:4px">${rec.ym}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">${items}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  return `<div class="hall-card"><h3>🏆 이달의 칭호 (시즌 업적)</h3>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:10px">${thisYm} 진행 중 — 월말에 확정되어 영구 기록됩니다</div>
+    ${currentHTML}
+    ${historyHTML}
+  </div>`;
 }
 
 // ── 렌더링 ────────────────────────────────────────────────────────
@@ -1768,13 +1992,14 @@ function renderHall() {
         <div style="flex:1;padding:0 12px"><strong>${m.name}</strong></div>
         <div style="font-size:12px;color:var(--text2)">${m.count}/${m.total}회</div>
       </div>`).join('')}</div></div>`:''}
+  ${renderSeasonAwardsCard()}
   <div class="hall-card"><h3>🏅 개인 업적 현황</h3>
     ${members.length===0?'<div style="font-size:13px;color:var(--text2)">회원 데이터가 없습니다.</div>':
     '<div style="display:flex;flex-direction:column;gap:4px">'+
     members.map(m=>{const achvs=getAchievements(m);const unlocked=achvs.filter(a=>a.unlocked);if(unlocked.length===0)return '';
       return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border)">
         <div style="font-size:13px;font-weight:500;min-width:60px">${m.name}</div>
-        <div style="display:flex;gap:5px;flex-wrap:wrap;flex:1">${achvs.map(a=>`<span title="${a.label}" style="font-size:17px;${a.unlocked?'':'opacity:0.2;filter:grayscale(1)'}">${a.icon}</span>`).join('')}</div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;flex:1">${achvs.map(a=>{const lh=a.hidden&&!a.unlocked;return `<span title="${lh?'???':a.label}" style="font-size:17px;${a.unlocked?'':'opacity:0.2;filter:grayscale(1)'}">${lh?'❓':a.icon}</span>`;}).join('')}</div>
         <div style="font-size:11px;color:var(--text2)">${unlocked.length}/${achvs.length}</div></div>`;
     }).join('')+'</div>'}
   </div>`;
@@ -1918,11 +2143,18 @@ function renderMemberProfile(id) {
   <div class="profile-card">
     <div style="font-size:13px;font-weight:500;margin-bottom:10px">업적 (${unlocked.length}/${achvs.length})</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px">
-      ${achvs.map(a=>`<div style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:var(--radius);background:${a.unlocked?'var(--warn-bg)':'var(--bg2)'};border:0.5px solid ${a.unlocked?'var(--warn-border)':'var(--border)'};${a.unlocked?'':'opacity:0.5'}">
-        <span style="font-size:18px">${a.icon}</span>
-        <div><div style="font-size:12px;font-weight:500;color:${a.unlocked?'var(--warn)':'var(--text2)'}">${a.label}</div><div style="font-size:11px;color:var(--text2)">${a.desc}</div></div>
-      </div>`).join('')}
+      ${achvs.map(a=>{
+        const isLockedHidden = a.hidden && !a.unlocked;
+        const icon = isLockedHidden ? '❓' : a.icon;
+        const label = isLockedHidden ? '???' : a.label;
+        const desc = isLockedHidden ? '아직 발견되지 않은 히든 업적' : a.desc;
+        return `<div style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:var(--radius);background:${a.unlocked?'var(--warn-bg)':'var(--bg2)'};border:0.5px solid ${a.unlocked?'var(--warn-border)':'var(--border)'};${a.unlocked?'':'opacity:0.5'}">
+        <span style="font-size:18px">${icon}</span>
+        <div><div style="font-size:12px;font-weight:500;color:${a.unlocked?'var(--warn)':'var(--text2)'}">${label}</div><div style="font-size:11px;color:var(--text2)">${desc}</div></div>
+      </div>`;
+      }).join('')}
     </div>
+    ${achvs.some(a=>a.hidden)?`<div style="font-size:11px;color:var(--text2);margin-top:8px">❓ 히든 업적은 달성 전까지 조건이 공개되지 않습니다.</div>`:''}
   </div>
   <div class="profile-card">
     <div style="font-size:13px;font-weight:500;margin-bottom:10px">참석 벙 목록 (${attended.length}개)</div>
@@ -2082,6 +2314,9 @@ window.addSettlementManualName = function() {
   settlementManualNames.push(name);
   input.value = '';
   renderSettlementModal();
+  // 모달 전체를 다시 그리면서 input이 새로 생성되어 포커스가 풀리므로, 다시 포커스를 줌
+  const newInput = document.getElementById('settlement-name-input');
+  if (newInput) newInput.focus();
 };
 
 window.removeSettlementManualName = function(name) {
@@ -2379,7 +2614,11 @@ function updateEditMode(){
 
 function openModal(html){document.getElementById('modal-content').innerHTML=html;document.getElementById('modal-backdrop').classList.add('open');}
 window.closeModal = function(){document.getElementById('modal-backdrop').classList.remove('open');};
-document.getElementById('modal-backdrop').addEventListener('click',function(e){if(e.target===this)closeModal();});
+// 텍스트 드래그 중 마우스가 배경으로 나가서 click이 발생해도 닫히지 않도록,
+// mousedown이 배경 자체에서 "시작"된 경우에만 닫히도록 처리 (드래그 시작점이 모달 내부면 무시)
+let modalMouseDownOnBackdrop = false;
+document.getElementById('modal-backdrop').addEventListener('mousedown',function(e){modalMouseDownOnBackdrop = (e.target===this);});
+document.getElementById('modal-backdrop').addEventListener('click',function(e){if(e.target===this && modalMouseDownOnBackdrop)closeModal();modalMouseDownOnBackdrop=false;});
 
 window.toggleTheme = function(){
   const root=document.documentElement;
