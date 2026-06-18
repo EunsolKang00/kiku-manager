@@ -1525,11 +1525,13 @@ function renderBungs() {
     const names = (b.attendees||[]).map(id=>{const m=members.find(x=>x.id===id);return m?m.name:'?'});
     const host = b.hostId ? members.find(x=>x.id===b.hostId) : null;
     const typeBadge = b.type==='번개'?'<span class="badge badge-bungae">번개</span>':'<span class="badge badge-jeongmo">정모</span>';
+    const settledBadge = b.settlement ? '<span class="badge badge-safe"><i class="ti ti-receipt-2" style="font-size:11px"></i> 정산완료</span>' : '';
     return `<div style="background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;margin-bottom:10px">
       <div class="flex-between mb-1">
-        <div class="flex">${typeBadge}<strong>${b.name}</strong>${isPast?'<span class="badge badge-safe">완료</span>':'<span class="badge badge-new">예정</span>'}</div>
+        <div class="flex">${typeBadge}<strong>${b.name}</strong>${isPast?'<span class="badge badge-safe">완료</span>':'<span class="badge badge-new">예정</span>'}${settledBadge}</div>
         <div class="flex" style="gap:4px">
           <button class="btn btn-sm btn-info" onclick="openTemplate('${b.id}')"><i class="ti ti-speakerphone"></i> 공지</button>
+          <button class="btn btn-sm" onclick="openSettlement('${b.id}')"><i class="ti ti-calculator"></i> 정산</button>
           <button class="btn btn-sm edit-only" onclick="openEditBung('${b.id}')"><i class="ti ti-edit"></i> 수정</button>
           <button class="btn btn-sm btn-danger edit-only" onclick="deleteBung('${b.id}')"><i class="ti ti-trash"></i></button>
         </div>
@@ -1936,6 +1938,7 @@ function renderMemberProfile(id) {
 }
 
 const UPDATES=[
+  {version:'v2.6',date:'2026.06.18',items:['모임비 정산 계산기 추가 — 사이드바 "정산" 탭, 항목별 금액·참가인원 입력 시 자동 분담 계산','벙 선택 모드(참석자 자동 연동) / 직접 입력 모드 둘 다 지원, 벙 카드에서도 바로 정산 진입 가능','정산 내역은 정산 탭에 저장되어 나중에 다시 확인 가능, 오픈채팅 송금용 복사 텍스트 자동 생성']},
   {version:'v2.5',date:'2026.06.18',items:['게시판(자유게시판/건의사항) 글쓰기·수정 시 사진 최대 4장 첨부 가능','사진은 본문 원하는 위치에 삽입 가능 (커서 위치에 [이미지] 표시 자동 삽입, 자유롭게 이동 가능)']},
   {version:'v2.4',date:'2026.06.18',items:['가로 스크롤 버그 근본 원인 수정 (레이아웃 구조 문제) + 긴 글은 일정 글자 수 이후 "더보기"로 처리','공지사항 작성자명도 연동된 프로필 이름을 우선 사용하도록 수정']},
   {version:'v2.3',date:'2026.06.18',items:['회원에게 운영진/모임장 역할 부여 기능 추가 (회원 명단에서 지정, 동일 관리 권한)','오늘의 노래 추천 — 대시보드에 매일 자동 추천 (운영진 플레이리스트 + 노래 추천 게시판 추천곡 합산)','노래 추천 게시판 추가 — 곡명/아티스트/추천 이유 입력','게시판·공지·댓글에 긴 글(줄바꿈 없는 텍스트) 작성 시 페이지가 가로로 길게 늘어나던 버그 수정']},
@@ -1960,13 +1963,14 @@ function renderUpdates() {
 // ── 공통 UI ───────────────────────────────────────────────────────
 window.switchTab = function(tab) {
   document.querySelectorAll('.nav-item').forEach((t,i)=>t.classList.toggle('active',
-    ['dashboard','notice','board','members','bung','ghost','stats','report','hall','calendar','profile','gallery','updates'][i]===tab));
+    ['dashboard','notice','board','settlement','members','bung','ghost','stats','report','hall','calendar','profile','gallery','updates'][i]===tab));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+tab).classList.add('active');
   if(tab==='gallery') loadGallery();
   if(tab==='calendar') renderCalendar();
   if(tab==='profile') renderProfileList();
   if(tab==='board') renderBoardList();
+  if(tab==='settlement') renderSettlementList();
 };
 
 window.filterMembers = function(q) {
@@ -2005,6 +2009,261 @@ window.showCalBungDetail = function(id) {
       <div class="flex"><i class="ti ti-users" style="color:var(--purple)"></i>${names.join(', ')||'없음'} (${names.length}명)</div>
     </div>
     <div class="flex" style="justify-content:flex-end"><button class="btn btn-primary" onclick="closeModal()">닫기</button></div>`);
+};
+
+// ── 모임비 정산 계산기 ───────────────────────────────────────────
+let settlementItems = [];
+let settlementMode = 'bung';
+let settlementBungId = null;
+let settlementManualNames = [];
+
+function settlementParticipants() {
+  if (settlementMode === 'bung') {
+    const b = bungs.find(x => x.id === settlementBungId);
+    if (!b) return [];
+    return (b.attendees||[]).map(id => { const m = members.find(x=>x.id===id); return m ? {key:m.id, name:m.name} : null; }).filter(Boolean);
+  }
+  return settlementManualNames.map(n => ({key:n, name:n}));
+}
+
+window.openSettlement = function(bungId) {
+  if (bungId) { switchTab('settlement'); }
+  settlementItems = [];
+  settlementMode = 'bung';
+  settlementBungId = bungId || (bungs[0]?.id || null);
+  settlementManualNames = [];
+  renderSettlementModal();
+};
+
+function renderSettlementModal() {
+  const pastBungs = [...bungs].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  openModal(`<div class="modal-title"><i class="ti ti-calculator" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>모임비 정산 계산기</div>
+    <div class="flex" style="gap:8px;margin-bottom:12px">
+      <button class="btn btn-sm ${settlementMode==='bung'?'btn-primary':''}" onclick="setSettlementMode('bung')">벙 선택</button>
+      <button class="btn btn-sm ${settlementMode==='manual'?'btn-primary':''}" onclick="setSettlementMode('manual')">직접 입력</button>
+    </div>
+    <div id="settlement-source-area" style="margin-bottom:14px">
+      ${settlementMode==='bung' ? `
+        <select id="settlement-bung-select" onchange="onSettlementBungChange(this.value)">
+          ${pastBungs.length===0?'<option value="">등록된 벙이 없습니다</option>':pastBungs.map(b=>`<option value="${b.id}" ${b.id===settlementBungId?'selected':''}>${formatDate(b.date)} · ${b.name}</option>`).join('')}
+        </select>
+        <div style="font-size:12px;color:var(--text2);margin-top:6px">참석자: ${settlementParticipants().map(p=>p.name).join(', ')||'없음'}</div>
+      ` : `
+        <div class="flex" style="gap:8px;margin-bottom:6px">
+          <input type="text" id="settlement-name-input" placeholder="이름 입력 후 엔터" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();addSettlementManualName();}">
+          <button class="btn btn-sm" type="button" onclick="addSettlementManualName()">추가</button>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px" id="settlement-name-tags">${settlementManualNames.map(n=>`<span class="attendee-tag">${n} <span style="cursor:pointer;margin-left:2px" onclick="removeSettlementManualName('${n}')">×</span></span>`).join('')||'<span style="font-size:12px;color:var(--text2)">참가자를 입력해주세요</span>'}</div>
+      `}
+    </div>
+    <div style="font-size:13px;font-weight:500;margin-bottom:8px">정산 항목</div>
+    <div id="settlement-items-area" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px"></div>
+    <button class="btn btn-sm" style="margin-bottom:16px" onclick="addSettlementItem()"><i class="ti ti-plus"></i> 항목 추가</button>
+    <div id="settlement-result-area"></div>
+    <div class="flex" style="justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn" onclick="closeModal()">닫기</button><button class="btn btn-primary" onclick="saveSettlement()"><i class="ti ti-device-floppy"></i> 저장</button></div>`);
+  if (settlementItems.length === 0) addSettlementItem();
+  else renderSettlementItems();
+}
+
+window.setSettlementMode = function(mode) {
+  settlementMode = mode;
+  renderSettlementModal();
+};
+
+window.onSettlementBungChange = function(id) {
+  settlementBungId = id;
+  renderSettlementModal();
+};
+
+window.addSettlementManualName = function() {
+  const input = document.getElementById('settlement-name-input');
+  const name = input.value.trim();
+  if (!name || settlementManualNames.includes(name)) { input.value=''; return; }
+  settlementManualNames.push(name);
+  input.value = '';
+  renderSettlementModal();
+};
+
+window.removeSettlementManualName = function(name) {
+  settlementManualNames = settlementManualNames.filter(n => n !== name);
+  settlementItems.forEach(it => { it.participants = it.participants.filter(k => k !== name); });
+  renderSettlementModal();
+};
+
+window.addSettlementItem = function() {
+  const participants = settlementParticipants();
+  settlementItems.push({ id: 'it'+Date.now()+Math.random().toString(36).slice(2,6), name:'', amount:0, participants: participants.map(p=>p.key) });
+  renderSettlementItems();
+}
+
+window.removeSettlementItem = function(id) {
+  settlementItems = settlementItems.filter(it => it.id !== id);
+  renderSettlementItems();
+};
+
+window.updateSettlementItemField = function(id, field, value) {
+  const it = settlementItems.find(x => x.id === id);
+  if (!it) return;
+  it[field] = field === 'amount' ? (parseInt(String(value).replace(/[^0-9]/g,''))||0) : value;
+  if (field === 'amount') renderSettlementItems(); else renderSettlementResult();
+};
+
+window.toggleSettlementParticipant = function(itemId, key) {
+  const it = settlementItems.find(x => x.id === itemId);
+  if (!it) return;
+  if (it.participants.includes(key)) it.participants = it.participants.filter(k => k !== key);
+  else it.participants.push(key);
+  renderSettlementItems();
+};
+
+function renderSettlementItems() {
+  const area = document.getElementById('settlement-items-area');
+  if (!area) return;
+  const participants = settlementParticipants();
+  area.innerHTML = settlementItems.map(it => {
+    const perPerson = it.participants.length > 0 ? Math.round(it.amount / it.participants.length) : 0;
+    return `<div style="border:0.5px solid var(--border);border-radius:var(--radius);padding:12px">
+      <div class="flex" style="gap:8px;margin-bottom:10px">
+        <input type="text" placeholder="항목명 (예: 식사)" value="${it.name}" style="flex:1" oninput="updateSettlementItemField('${it.id}','name',this.value)">
+        <input type="text" placeholder="금액" value="${it.amount?it.amount.toLocaleString():''}" style="width:110px;text-align:right" oninput="updateSettlementItemField('${it.id}','amount',this.value)">
+        <span style="display:flex;align-items:center;font-size:13px;color:var(--text2)">원</span>
+        <button class="btn btn-sm btn-danger" onclick="removeSettlementItem('${it.id}')"><i class="ti ti-trash"></i></button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${participants.length===0?'<span style="font-size:12px;color:var(--text2)">참가자가 없습니다</span>':participants.map(p=>{
+          const checked = it.participants.includes(p.key);
+          return `<label style="display:flex;align-items:center;gap:4px;font-size:13px;border:0.5px solid var(--border);border-radius:var(--radius);padding:4px 10px;cursor:pointer;${checked?'background:var(--bg2)':'color:var(--text3)'}"><input type="checkbox" ${checked?'checked':''} style="margin:0" onchange="toggleSettlementParticipant('${it.id}','${p.key}')">${p.name}</label>`;
+        }).join('')}
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-top:8px">${it.participants.length}명 참여 · 1인당 ${perPerson.toLocaleString()}원</div>
+    </div>`;
+  }).join('');
+  renderSettlementResult();
+}
+
+function computeSettlementTotals() {
+  const participants = settlementParticipants();
+  const totals = {};
+  participants.forEach(p => totals[p.key] = 0);
+  let grandTotal = 0;
+  settlementItems.forEach(it => {
+    if (!it.amount || it.participants.length === 0) return;
+    const per = Math.round(it.amount / it.participants.length);
+    grandTotal += it.amount;
+    it.participants.forEach(key => { if (totals[key] !== undefined) totals[key] += per; });
+  });
+  return { totals, grandTotal, participants };
+}
+
+function renderSettlementResult() {
+  const area = document.getElementById('settlement-result-area');
+  if (!area) return;
+  const { totals, grandTotal, participants } = computeSettlementTotals();
+  if (participants.length === 0 || settlementItems.every(it=>!it.amount)) { area.innerHTML=''; return; }
+  const sumCheck = Object.values(totals).reduce((a,b)=>a+b,0);
+  area.innerHTML = `<div style="font-size:13px;font-weight:500;margin-bottom:8px">개인별 정산 결과</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:8px">
+      ${participants.map(p=>`<div style="background:var(--bg2);border-radius:var(--radius);padding:10px 12px">
+        <div style="font-size:12px;color:var(--text2)">${p.name}</div>
+        <div style="font-size:18px;font-weight:500">${(totals[p.key]||0).toLocaleString()}원</div>
+      </div>`).join('')}
+    </div>
+    <div style="font-size:12px;color:var(--text3)">총 지출 ${grandTotal.toLocaleString()}원 · 분담 합계 ${sumCheck.toLocaleString()}원</div>
+    <div style="margin-top:12px">
+      <div class="flex-between" style="margin-bottom:6px"><span style="font-size:13px;font-weight:500">오픈채팅 정산 요청 텍스트</span><button class="btn btn-sm" onclick="copySettlementText()"><i class="ti ti-copy"></i> 복사</button></div>
+      <div class="template-box" id="settlement-text">${buildSettlementText()}</div>
+    </div>`;
+}
+
+function buildSettlementText() {
+  const b = settlementMode === 'bung' ? bungs.find(x=>x.id===settlementBungId) : null;
+  const title = b ? `${formatDate(b.date)} ${b.name} 정산 안내` : '모임비 정산 안내';
+  const { totals, participants } = computeSettlementTotals();
+  const itemLines = settlementItems.filter(it=>it.amount && it.participants.length>0).map(it => {
+    const names = it.participants.map(k => participants.find(p=>p.key===k)?.name || k).join(', ');
+    const per = Math.round(it.amount / it.participants.length);
+    return `${it.name||'항목'} ${it.amount.toLocaleString()}원 ÷ ${it.participants.length}명 = ${per.toLocaleString()}원 (${names})`;
+  }).join('\n');
+  const personLines = participants.map(p => `▸ ${p.name}: ${(totals[p.key]||0).toLocaleString()}원`).join('\n');
+  return `${title}\n\n${itemLines}\n\n${personLines}\n\n오픈채팅 송금으로 보내주세요!`;
+}
+
+window.copySettlementText = function() {
+  const text = document.getElementById('settlement-text').innerText;
+  navigator.clipboard.writeText(text).then(()=>{
+    const btn = event.target.closest('button');
+    btn.innerHTML = '<i class="ti ti-check"></i> 복사됨!';
+    setTimeout(()=>{ btn.innerHTML = '<i class="ti ti-copy"></i> 복사'; }, 2000);
+  });
+};
+
+window.saveSettlement = async function() {
+  const validItems = settlementItems.filter(it => it.name && it.amount && it.participants.length>0);
+  if (validItems.length === 0) { alert('정산 항목을 1개 이상 입력해주세요.'); return; }
+  const { totals, grandTotal, participants } = computeSettlementTotals();
+  const data = {
+    mode: settlementMode,
+    bungId: settlementMode==='bung' ? settlementBungId : null,
+    title: settlementMode==='bung' ? (bungs.find(x=>x.id===settlementBungId)?.name||'정산') : '직접 입력 정산',
+    date: settlementMode==='bung' ? (bungs.find(x=>x.id===settlementBungId)?.date||TODAY.toISOString().slice(0,10)) : TODAY.toISOString().slice(0,10),
+    items: validItems.map(it=>({name:it.name, amount:it.amount, participants:it.participants})),
+    participants: participants,
+    totals,
+    grandTotal,
+    text: buildSettlementText(),
+    createdAt: serverTimestamp()
+  };
+  const ref = await addDoc(collection(db, 'settlements'), data);
+  if (settlementMode === 'bung' && settlementBungId) {
+    await updateDoc(doc(db, 'bungs', settlementBungId), { settlement: { settlementId: ref.id, grandTotal } });
+  }
+  closeModal();
+};
+
+function renderSettlementList() {
+  const el = document.getElementById('settlement-list');
+  if (!el) return;
+  getDocs(query(collection(db,'settlements'), orderBy('createdAt','desc'))).then(snap => {
+    const items = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    if (items.length === 0) { el.innerHTML = '<div class="empty-state"><i class="ti ti-calculator"></i>정산 내역이 없습니다.</div>'; return; }
+    el.innerHTML = items.map(s => `<div style="background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;margin-bottom:10px">
+      <div class="flex-between mb-1">
+        <div class="flex"><strong>${s.title}</strong><span style="font-size:12px;color:var(--text2)">${formatDate(s.date)}</span></div>
+        <div class="flex" style="gap:4px">
+          <button class="btn btn-sm" onclick="viewSettlement('${s.id}')"><i class="ti ti-eye"></i> 보기</button>
+          <button class="btn btn-sm btn-danger edit-only" onclick="deleteSettlement('${s.id}','${s.bungId||''}')"><i class="ti ti-trash"></i></button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text2)">총 ${(s.grandTotal||0).toLocaleString()}원 · ${(s.participants||[]).map(p=>p.name).join(', ')}</div>
+    </div>`).join('');
+  });
+}
+
+window.viewSettlement = async function(id) {
+  const snap = await getDoc(doc(db,'settlements',id));
+  if (!snap.exists()) return;
+  const s = snap.data();
+  openModal(`<div class="modal-title"><i class="ti ti-receipt-2" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>${s.title}</div>
+    <div class="template-box" style="margin-bottom:16px">${s.text}</div>
+    <div class="flex" style="justify-content:flex-end;gap:8px">
+      <button class="btn" onclick="closeModal()">닫기</button>
+      <button class="btn btn-primary" onclick="copyViewedSettlement(this)" data-text="${encodeURIComponent(s.text)}"><i class="ti ti-copy"></i> 복사</button>
+    </div>`);
+};
+
+window.copyViewedSettlement = function(btn) {
+  const text = decodeURIComponent(btn.getAttribute('data-text'));
+  navigator.clipboard.writeText(text).then(()=>{
+    btn.innerHTML = '<i class="ti ti-check"></i> 복사됨!';
+    setTimeout(()=>{ btn.innerHTML = '<i class="ti ti-copy"></i> 복사'; }, 2000);
+  });
+};
+
+window.deleteSettlement = async function(id, bungId) {
+  if (!confirm('이 정산 내역을 삭제할까요?')) return;
+  await deleteDoc(doc(db,'settlements',id));
+  if (bungId) await updateDoc(doc(db,'bungs',bungId), { settlement: null });
+  renderSettlementList();
 };
 
 window.openTemplate = function(id) {
