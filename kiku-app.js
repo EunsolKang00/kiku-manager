@@ -25,6 +25,7 @@ let isAdmin = false;
 const TODAY = new Date();
 let members = [], bungs = [], notices = [], playlist = [];
 let posts = [], currentBoardType = 'free', currentPostId = null, postComments = [];
+let postImageFiles = [], editPostImageFiles = [], editPostExistingImages = [];
 let nextMemberId = 1, nextBungId = 1;
 let calYear = TODAY.getFullYear(), calMonth = TODAY.getMonth();
 let selectedMemberId = null;
@@ -244,7 +245,7 @@ window.openNoticeDetail = function(id) {
   const date = n.createdAt ? new Date(n.createdAt.seconds * 1000) : new Date();
   openModal(`<div class="modal-title">${n.pinned ? '📌 ' : ''}${n.title}</div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:12px">${n.authorName || '운영진'} · ${formatDate(date)}</div>
-    <div style="font-size:13px;line-height:1.8;white-space:pre-wrap;margin-bottom:16px">${n.content}</div>
+    <div style="font-size:13px;line-height:1.8;margin-bottom:16px">${renderClampedText(n.content, 500)}</div>
     <div class="flex" style="justify-content:flex-end"><button class="btn btn-primary" onclick="closeModal()">닫기</button></div>`);
 };
 
@@ -267,7 +268,7 @@ window.addNotice = async function() {
     title, content,
     pinned: document.getElementById('n-pinned').checked,
     important: document.getElementById('n-important').checked,
-    authorName: currentUser.displayName || currentUser.email,
+    authorName: authorDisplayName(),
     authorEmail: currentUser.email,
     createdAt: serverTimestamp(),
   });
@@ -306,6 +307,130 @@ window.deleteNotice = async function(id) {
 };
 
 // ── 게시판 (자유게시판/건의사항) ──────────────────────────────────
+// ── 긴 텍스트 처리 (글자 수 제한 + 더보기) ──────────────────────────
+let clampIdCounter = 0;
+function renderClampedText(text, limit) {
+  const safe = (text||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  if (safe.length <= limit) return `<span style="white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">${safe}</span>`;
+  const id = `clamp-${clampIdCounter++}`;
+  const short = safe.slice(0, limit);
+  return `<span id="${id}" style="white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word" data-full="${encodeURIComponent(safe)}" data-short="${encodeURIComponent(short)}" data-expanded="0">${short}<span style="color:var(--info)">... </span><a href="#" onclick="event.preventDefault();toggleClamp('${id}')" style="color:var(--info);font-size:12px;text-decoration:underline">더보기</a></span>`;
+}
+window.toggleClamp = function(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const expanded = el.getAttribute('data-expanded') === '1';
+  const full = decodeURIComponent(el.getAttribute('data-full'));
+  const short = decodeURIComponent(el.getAttribute('data-short'));
+  if (expanded) {
+    el.innerHTML = `${short}<span style="color:var(--info)">... </span><a href="#" onclick="event.preventDefault();toggleClamp('${id}')" style="color:var(--info);font-size:12px;text-decoration:underline">더보기</a>`;
+    el.setAttribute('data-expanded', '0');
+  } else {
+    el.innerHTML = `${full} <a href="#" onclick="event.preventDefault();toggleClamp('${id}')" style="color:var(--info);font-size:12px;text-decoration:underline">접기</a>`;
+    el.setAttribute('data-expanded', '1');
+  }
+};
+
+const MAX_POST_IMAGES = 4;
+
+function insertAtCursor(textarea, text) {
+  const start = textarea.selectionStart, end = textarea.selectionEnd;
+  const val = textarea.value;
+  textarea.value = val.slice(0, start) + text + val.slice(end);
+  const pos = start + text.length;
+  textarea.selectionStart = textarea.selectionEnd = pos;
+  textarea.focus();
+}
+
+window.handlePostImageSelect = function(input) {
+  const textarea = document.getElementById('p-content');
+  const files = [...input.files];
+  for (const file of files) {
+    if (postImageFiles.length >= MAX_POST_IMAGES) { alert(`사진은 최대 ${MAX_POST_IMAGES}장까지 첨부할 수 있습니다.`); break; }
+    const idx = postImageFiles.length + 1;
+    postImageFiles.push(file);
+    insertAtCursor(textarea, `\n[이미지${idx}]\n`);
+  }
+  input.value = '';
+  renderPostImagePreview();
+};
+
+function renderPostImagePreview() {
+  const el = document.getElementById('p-image-preview');
+  if (!el) return;
+  el.innerHTML = postImageFiles.map((f,i) => `<div style="position:relative">
+    <img src="${URL.createObjectURL(f)}" style="width:60px;height:60px;object-fit:cover;border-radius:var(--radius)">
+    <span style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="removePostImage(${i})">×</span>
+    <span style="position:absolute;bottom:-2px;left:-2px;background:rgba(0,0,0,0.6);color:#fff;font-size:9px;padding:0 4px;border-radius:3px">${i+1}</span>
+  </div>`).join('');
+}
+
+window.removePostImage = function(i) {
+  postImageFiles.splice(i, 1);
+  renderPostImagePreview();
+};
+
+window.removeEditPostImage = function(i, isExisting) {
+  if (isExisting) editPostExistingImages.splice(i, 1);
+  else editPostImageFiles.splice(i, 1);
+  renderEditPostImagePreview();
+};
+
+function renderEditPostImagePreview() {
+  const el = document.getElementById('ep-image-preview');
+  if (!el) return;
+  const existingHtml = editPostExistingImages.map((url,i) => `<div style="position:relative">
+    <img src="${url}" style="width:60px;height:60px;object-fit:cover;border-radius:var(--radius)">
+    <span style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="removeEditPostImage(${i},true)">×</span>
+  </div>`).join('');
+  const newHtml = editPostImageFiles.map((f,i) => `<div style="position:relative">
+    <img src="${URL.createObjectURL(f)}" style="width:60px;height:60px;object-fit:cover;border-radius:var(--radius)">
+    <span style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="removeEditPostImage(${i},false)">×</span>
+    <span style="position:absolute;bottom:-2px;left:-2px;background:rgba(0,0,0,0.6);color:#fff;font-size:9px;padding:0 4px;border-radius:3px">new</span>
+  </div>`).join('');
+  el.innerHTML = existingHtml + newHtml;
+}
+
+window.handleEditPostImageSelect = function(input) {
+  const textarea = document.getElementById('ep-content');
+  const files = [...input.files];
+  for (const file of files) {
+    if (editPostExistingImages.length + editPostImageFiles.length >= MAX_POST_IMAGES) { alert(`사진은 최대 ${MAX_POST_IMAGES}장까지 첨부할 수 있습니다.`); break; }
+    const idx = editPostExistingImages.length + editPostImageFiles.length + 1;
+    editPostImageFiles.push(file);
+    insertAtCursor(textarea, `\n[이미지${idx}]\n`);
+  }
+  input.value = '';
+  renderEditPostImagePreview();
+};
+
+async function uploadPostImages(files) {
+  const urls = [];
+  for (const file of files) {
+    const storageRef = ref(storage, `posts/${Date.now()}_${Math.random().toString(36).slice(2)}_${file.name}`);
+    await uploadBytes(storageRef, file);
+    urls.push(await getDownloadURL(storageRef));
+  }
+  return urls;
+}
+
+// 본문 텍스트 안의 [이미지N] 자리에 실제 이미지를 끼워넣어 렌더링
+function renderPostBodyWithImages(content, images) {
+  const safe = (content||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const parts = safe.split(/\[이미지(\d+)\]/g);
+  let html = '';
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 0) {
+      html += `<span style="white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">${parts[i]}</span>`;
+    } else {
+      const imgIdx = parseInt(parts[i]) - 1;
+      const url = (images||[])[imgIdx];
+      if (url) html += `<img src="${url}" style="max-width:100%;border-radius:var(--radius-lg);margin:10px 0;display:block">`;
+    }
+  }
+  return html;
+}
+
 function authorDisplayName() {
   const me = getMyMember();
   return me ? me.name : (currentUser.displayName || currentUser.email);
@@ -334,6 +459,7 @@ function renderBoardList() {
     const displayName = p.anonymous ? '익명' : (p.authorName || '회원');
     const canManage = isAdmin || (currentUser && p.authorUid === currentUser.uid);
     const titleHtml = p.type === 'song' ? `<i class="ti ti-music" style="color:var(--purple);margin-right:4px"></i>${p.title}` : p.title;
+    const previewText = (p.content||'').replace(/\[이미지\d+\]/g, '📷 ').trim();
     return `<div class="notice-card" onclick="openPostDetail('${p.id}')">
       <div class="flex-between mb-1">
         <strong style="font-size:14px">${titleHtml}</strong>
@@ -342,7 +468,7 @@ function renderBoardList() {
           <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deletePost('${p.id}')"><i class="ti ti-trash"></i></button>` : ''}
         </div>
       </div>
-      <div style="font-size:13px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px">${p.content}</div>
+      <div style="font-size:13px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px">${previewText}${p.images&&p.images.length>0?` <span style="color:var(--text3);font-size:11px">(사진 ${p.images.length}장)</span>`:''}</div>
       <div style="font-size:11px;color:var(--text3);display:flex;gap:8px;align-items:center">
         <span>${displayName} · ${formatDate(date)}</span>
         <span><i class="ti ti-message-circle" style="font-size:11px;vertical-align:-1px"></i> ${p.commentCount||0}</span>
@@ -368,8 +494,16 @@ window.openAddPost = function() {
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>${isSuggestion?'건의사항':'자유게시판'} 글쓰기</div>
     <div class="form-group"><label>제목</label><input type="text" id="p-title" placeholder="제목을 입력하세요" autofocus></div>
     <div class="form-group"><label>내용</label><textarea id="p-content" placeholder="내용을 입력하세요" style="min-height:140px"></textarea></div>
+    <div class="form-group">
+      <label>사진 첨부 (최대 4장)</label>
+      <input type="file" id="p-images" accept="image/*" multiple onchange="handlePostImageSelect(this)">
+      <div style="font-size:11px;color:var(--text2);margin-top:4px">사진을 선택하면 본문 커서 위치에 <code>[이미지]</code> 표시가 들어갑니다. 글 안에서 원하는 자리로 옮겨도 됩니다.</div>
+      <div id="p-image-preview" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
+    </div>
     ${isSuggestion?`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-bottom:12px"><input type="checkbox" id="p-anon"> 익명으로 작성</label>`:''}
+    <div id="p-upload-status" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="addPost()">등록</button></div>`);
+  postImageFiles = [];
 };
 
 window.addPost = async function() {
@@ -386,8 +520,20 @@ window.addPost = async function() {
   const content = document.getElementById('p-content').value.trim();
   if (!isSong && (!title || !content)) { alert('제목과 내용을 입력해주세요.'); return; }
   const anon = document.getElementById('p-anon')?.checked || false;
+  const statusEl = document.getElementById('p-upload-status');
+  let images = [];
+  if (postImageFiles.length > 0) {
+    if (statusEl) statusEl.textContent = `사진 업로드 중... (0/${postImageFiles.length})`;
+    try {
+      images = await uploadPostImages(postImageFiles);
+    } catch(e) {
+      if (statusEl) statusEl.textContent = '사진 업로드 실패: ' + e.message;
+      return;
+    }
+  }
   const data = {
     type: currentBoardType, title, content,
+    images,
     anonymous: anon,
     authorName: authorDisplayName(),
     authorUid: currentUser.uid,
@@ -397,23 +543,47 @@ window.addPost = async function() {
   };
   if (isSong) { data.songName = songName; data.artistName = artistName; }
   await addDoc(collection(db, 'posts'), data);
+  postImageFiles = [];
   closeModal();
 };
 
 window.openEditPost = function(id) {
   const p = posts.find(x => x.id === id);
   if (!p) return;
+  editPostExistingImages = [...(p.images||[])];
+  editPostImageFiles = [];
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>글 수정</div>
     <div class="form-group"><label>제목</label><input type="text" id="ep-title" value="${p.title}"></div>
     <div class="form-group"><label>내용</label><textarea id="ep-content" style="min-height:140px">${p.content}</textarea></div>
+    <div class="form-group">
+      <label>사진 첨부 (최대 4장)</label>
+      <input type="file" id="ep-images" accept="image/*" multiple onchange="handleEditPostImageSelect(this)">
+      <div style="font-size:11px;color:var(--text2);margin-top:4px">사진을 선택하면 본문 커서 위치에 <code>[이미지]</code> 표시가 들어갑니다.</div>
+      <div id="ep-image-preview" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
+    </div>
+    <div id="ep-upload-status" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editPost('${id}')">저장</button></div>`);
+  renderEditPostImagePreview();
 };
 
 window.editPost = async function(id) {
   const title = document.getElementById('ep-title').value.trim();
   const content = document.getElementById('ep-content').value.trim();
   if (!title || !content) { alert('제목과 내용을 입력해주세요.'); return; }
-  await updateDoc(doc(db, 'posts', id), {title, content});
+  const statusEl = document.getElementById('ep-upload-status');
+  let images = [...editPostExistingImages];
+  if (editPostImageFiles.length > 0) {
+    if (statusEl) statusEl.textContent = '사진 업로드 중...';
+    try {
+      const uploaded = await uploadPostImages(editPostImageFiles);
+      images = images.concat(uploaded);
+    } catch(e) {
+      if (statusEl) statusEl.textContent = '사진 업로드 실패: ' + e.message;
+      return;
+    }
+  }
+  await updateDoc(doc(db, 'posts', id), {title, content, images});
+  editPostImageFiles = []; editPostExistingImages = [];
   closeModal();
 };
 
@@ -449,7 +619,7 @@ function renderPostDetail() {
     <div class="notice-card" style="cursor:default">
       <div style="font-size:17px;font-weight:500;margin-bottom:6px">${p.title}</div>
       <div style="font-size:12px;color:var(--text3);margin-bottom:14px">${displayName} · ${formatDate(date)}</div>
-      <div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${p.content}</div>
+      <div style="font-size:14px;line-height:1.8">${(p.images&&p.images.length>0) ? renderPostBodyWithImages(p.content, p.images) : renderClampedText(p.content, 500)}</div>
     </div>
     <div style="margin-top:16px">
       <div style="font-size:13px;font-weight:500;margin-bottom:10px">댓글 ${postComments.length}개</div>
@@ -460,7 +630,7 @@ function renderPostDetail() {
           return `<div style="background:var(--bg2);border-radius:var(--radius);padding:10px 12px">
             <div class="flex-between"><span style="font-size:12px;font-weight:500">${c.authorName}</span>
             ${canDel?`<button class="btn btn-sm" style="padding:2px 6px" onclick="deleteComment('${c.id}')"><i class="ti ti-trash" style="font-size:12px"></i></button>`:''}</div>
-            <div style="font-size:13px;margin-top:4px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">${c.content}</div>
+            <div style="font-size:13px;margin-top:4px">${renderClampedText(c.content, 300)}</div>
             <div style="font-size:10px;color:var(--text3);margin-top:4px">${formatDate(cdate)}</div>
           </div>`;
         }).join('')}
@@ -1766,6 +1936,8 @@ function renderMemberProfile(id) {
 }
 
 const UPDATES=[
+  {version:'v2.5',date:'2026.06.18',items:['게시판(자유게시판/건의사항) 글쓰기·수정 시 사진 최대 4장 첨부 가능','사진은 본문 원하는 위치에 삽입 가능 (커서 위치에 [이미지] 표시 자동 삽입, 자유롭게 이동 가능)']},
+  {version:'v2.4',date:'2026.06.18',items:['가로 스크롤 버그 근본 원인 수정 (레이아웃 구조 문제) + 긴 글은 일정 글자 수 이후 "더보기"로 처리','공지사항 작성자명도 연동된 프로필 이름을 우선 사용하도록 수정']},
   {version:'v2.3',date:'2026.06.18',items:['회원에게 운영진/모임장 역할 부여 기능 추가 (회원 명단에서 지정, 동일 관리 권한)','오늘의 노래 추천 — 대시보드에 매일 자동 추천 (운영진 플레이리스트 + 노래 추천 게시판 추천곡 합산)','노래 추천 게시판 추가 — 곡명/아티스트/추천 이유 입력','게시판·공지·댓글에 긴 글(줄바꿈 없는 텍스트) 작성 시 페이지가 가로로 길게 늘어나던 버그 수정']},
   {version:'v2.2',date:'2026.06.18',items:['모바일/사파리 로그인 오류 수정 (팝업 우선 방식 + 실패 시 원인 표시)','로그인 없이 둘러보기(게스트 모드) 추가','구글 로그인 시 개인정보 수집·이용 안내 동의 절차 추가','회원 프로필 "목록으로" 버튼 작동 오류 수정','프로필 사진이 전체 회원 목록·이달의 MVP·이달의 벙주 카드에도 반영되도록 수정','운영진 계정도 회원 프로필 연동 가능하도록 수정 (즉시 연결), 회원 명단 탭에 "내 프로필 연결" 버튼 추가']},
   {version:'v2.1',date:'2026.06.18',items:['게시판 기능 추가 — 자유게시판, 건의사항(익명 가능), 댓글 기능','회원 프로필 ↔ 구글 계정 연결 시스템 (운영진 승인 방식)','프로필 커스텀 — 닉네임, 사진, 한줄소개, 최애곡/아티스트 (본인만 수정 가능)','통계 탭 기준을 최근 2개월 활동성으로 변경, 명예의 전당(전체 역대)과 역할 구분']},
