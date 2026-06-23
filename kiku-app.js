@@ -1994,6 +1994,9 @@ function renderHall() {
         <div style="font-size:12px;color:var(--text2)">${m.count}/${m.total}회</div>
       </div>`).join('')}</div></div>`:''}
   ${renderSeasonAwardsCard()}
+  <div class="hall-card"><h3>🎶 노래 이상형월드컵</h3>
+    <div id="tournament-card-content"><div style="font-size:13px;color:var(--text2)">불러오는 중...</div></div>
+  </div>
   <div class="hall-card"><h3>🏅 개인 업적 현황</h3>
     ${members.length===0?'<div style="font-size:13px;color:var(--text2)">회원 데이터가 없습니다.</div>':
     '<div style="display:flex;flex-direction:column;gap:4px">'+
@@ -2004,6 +2007,7 @@ function renderHall() {
         <div style="font-size:11px;color:var(--text2)">${unlocked.length}/${achvs.length}</div></div>`;
     }).join('')+'</div>'}
   </div>`;
+  loadTournaments();
 }
 
 function renderCalendar() {
@@ -2197,10 +2201,248 @@ function renderMemberProfile(id) {
         <td>${b.type==='번개'?'<span class="badge badge-bungae">번개</span>':'<span class="badge badge-jeongmo">정모</span>'}</td>
         <td style="color:var(--text2)">${b.place||'-'}</td></tr>`).join('')}
       </tbody></table></div>`}
+  </div>
+  <div class="profile-card">
+    <div class="flex-between" style="margin-bottom:10px">
+      <div style="font-size:13px;font-weight:500">💌 롤링페이퍼</div>
+      <button class="btn btn-sm btn-primary" onclick="openAddRollingMessage('${m.id}')"><i class="ti ti-pencil"></i> 메시지 남기기</button>
+    </div>
+    <div id="rolling-paper-list"><div style="font-size:13px;color:var(--text2)">불러오는 중...</div></div>
   </div>`;
+  loadRollingMessages(m.id);
 }
 
+let tournaments = [];
+let activeTournamentUnsub = null;
+let activeTournamentData = null;
+async function loadTournaments() {
+  try {
+    const snap = await getDocs(query(collection(db,'tournaments'), orderBy('createdAt','desc')));
+    tournaments = snap.docs.map(d=>({id:d.id,...d.data()}));
+  } catch(e) { tournaments = []; }
+  renderTournamentsCard();
+}
+
+function renderTournamentsCard() {
+  const el = document.getElementById('tournament-card-content');
+  if (!el) return;
+  const ongoing = tournaments.filter(t=>t.status==='voting');
+  const done = tournaments.filter(t=>t.status==='done').slice(0,5);
+  el.innerHTML = `
+    ${ongoing.length===0?'<div style="font-size:13px;color:var(--text2);margin-bottom:10px">진행 중인 토너먼트가 없습니다.</div>':
+    ongoing.map(t=>{
+      const roundNames=['16강','8강','4강','결승'];
+      const totalRounds=Math.log2(t.candidates.length);
+      const roundLabel=roundNames[totalRounds-1-((totalRounds-1)-t.currentRound)]||`${t.currentRound+1}라운드`;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px">
+        <div><div style="font-size:13px;font-weight:500">🎶 ${t.title}</div><div style="font-size:11px;color:var(--text2);margin-top:2px">${roundLabel} 진행 중 · 후보 ${t.candidates.length}곡</div></div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm btn-primary" onclick="openTournamentVote('${t.id}')">투표하기</button>
+          ${isAdmin?`<button class="btn btn-sm" onclick="advanceTournamentRound('${t.id}')">다음 라운드</button>`:''}
+        </div>
+      </div>`;
+    }).join('')}
+    ${isAdmin?`<button class="btn btn-sm" onclick="openCreateTournament()"><i class="ti ti-plus"></i> 새 토너먼트 시작</button>`:''}
+    ${done.length>0?`<div style="font-size:12px;font-weight:500;color:var(--text2);margin-top:14px;margin-bottom:6px">역대 우승곡</div>
+    ${done.map(t=>`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:0.5px solid var(--border)">
+      <span style="font-size:18px">🏆</span>
+      <div style="flex:1"><div style="font-size:13px;font-weight:500">${t.winner?.songName||'-'}${t.winner?.artistName?` <span style="color:var(--text2);font-weight:400">- ${t.winner.artistName}</span>`:''}</div>
+      <div style="font-size:11px;color:var(--text2)">${t.title}</div></div>
+    </div>`).join('')}`:''}
+  `;
+}
+
+
+function getUniqueSongPool() {
+  const pool = getSongPool();
+  const seen = new Set();
+  const unique = [];
+  pool.forEach(p=>{
+    const key=(p.songName||'').trim().toLowerCase()+'|'+(p.artistName||'').trim().toLowerCase();
+    if(!(p.songName||'').trim() || seen.has(key)) return;
+    seen.add(key); unique.push(p);
+  });
+  return unique;
+}
+
+let _tnPool = [];
+window.openCreateTournament = function() {
+  if (!isAdmin) return;
+  _tnPool = getUniqueSongPool();
+  if (_tnPool.length<2) { alert('토너먼트를 시작하려면 추천곡이 2곡 이상 필요합니다. (플레이리스트 또는 노래 추천 게시판에 곡을 추가해주세요)'); return; }
+  openModal(`<div class="modal-title">🎶 노래 이상형월드컵 시작</div>
+    <input type="text" id="tn-title" placeholder="토너먼트 이름 (예: 2026년 6월 이상형월드컵)" style="width:100%;margin-bottom:10px">
+    <div style="font-size:12px;color:var(--text2);margin-bottom:8px">참가곡을 선택하세요. 선택한 개수 중 2의 거듭수(최대 16곡)로 잘라 진행됩니다.</div>
+    <div style="max-height:260px;overflow-y:auto;border:0.5px solid var(--border);border-radius:var(--radius);padding:8px;margin-bottom:14px">
+      ${_tnPool.map((p,i)=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;font-size:13px">
+        <input type="checkbox" class="tn-song-check" value="${i}">
+        <span>${p.songName}${p.artistName?` <span style="color:var(--text2)">- ${p.artistName}</span>`:''}</span>
+      </label>`).join('')}
+    </div>
+    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button>
+    <button class="btn btn-primary" onclick="createTournamentConfirm()">시작</button></div>`);
+};
+
+window.createTournamentConfirm = async function() {
+  const title = document.getElementById('tn-title').value.trim() || '노래 이상형월드컵';
+  const checked = [...document.querySelectorAll('.tn-song-check:checked')].map(c=>parseInt(c.value));
+  if (checked.length<2) { alert('2곡 이상 선택해주세요.'); return; }
+  let selected = checked.map(i=>_tnPool[i]);
+  for (let i=selected.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [selected[i],selected[j]]=[selected[j],selected[i]]; }
+  let bracketSize=1;
+  while (bracketSize*2<=selected.length && bracketSize*2<=16) bracketSize*=2;
+  selected = selected.slice(0,bracketSize);
+  const round0 = [];
+  for (let i=0;i<selected.length;i+=2) {
+    round0.push({a:{songName:selected[i].songName,artistName:selected[i].artistName||''}, b:{songName:selected[i+1].songName,artistName:selected[i+1].artistName||''}, votes:{}});
+  }
+  await addDoc(collection(db,'tournaments'), {
+    title, candidates: selected.map(s=>({songName:s.songName,artistName:s.artistName||''})),
+    rounds:[round0], currentRound:0, status:'voting', winner:null, createdAt: serverTimestamp()
+  });
+  closeModal();
+  loadTournaments();
+};
+
+window.openTournamentVote = function(id) {
+  if (activeTournamentUnsub) { activeTournamentUnsub(); activeTournamentUnsub=null; }
+  activeTournamentUnsub = onSnapshot(doc(db,'tournaments',id), snap=>{
+    if (!snap.exists()) return;
+    activeTournamentData = {id:snap.id, ...snap.data()};
+    renderTournamentVoteModal();
+  });
+};
+
+function renderTournamentVoteModal() {
+  const t = activeTournamentData;
+  if (!t) return;
+  const round = t.rounds[t.currentRound] || [];
+  const totalRounds = Math.log2(t.candidates.length);
+  const remaining = totalRounds - t.currentRound;
+  const roundNames = {1:'결승',2:'4강',3:'8강',4:'16강'};
+  const roundLabel = roundNames[remaining] || `${t.currentRound+1}라운드`;
+  const myUid = currentUser ? currentUser.uid : null;
+  const html = `<div class="modal-title">🎶 ${t.title} · ${roundLabel}</div>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px">
+    ${round.map((match,mi)=>{
+      const votesA = Object.values(match.votes||{}).filter(v=>v==='a').length;
+      const votesB = Object.values(match.votes||{}).filter(v=>v==='b').length;
+      const myVote = myUid ? (match.votes||{})[myUid] : null;
+      return `<div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn btn-sm" style="flex:1;text-align:left;${myVote==='a'?'background:var(--info-bg);border-color:var(--info)':''}" onclick="castTournamentVote('${t.id}',${mi},'a')">
+            ${match.a.songName}${match.a.artistName?` <span style="color:var(--text2);font-size:11px">- ${match.a.artistName}</span>`:''}<br><span style="font-size:11px;color:var(--text2)">${votesA}표</span>
+          </button>
+          <span style="font-size:11px;color:var(--text2)">VS</span>
+          <button class="btn btn-sm" style="flex:1;text-align:left;${myVote==='b'?'background:var(--info-bg);border-color:var(--info)':''}" onclick="castTournamentVote('${t.id}',${mi},'b')">
+            ${match.b.songName}${match.b.artistName?` <span style="color:var(--text2);font-size:11px">- ${match.b.artistName}</span>`:''}<br><span style="font-size:11px;color:var(--text2)">${votesB}표</span>
+          </button>
+        </div>
+      </div>`;
+    }).join('')}
+    </div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:10px">곡을 클릭해서 투표하세요. 다시 클릭하면 투표를 바꿀 수 있습니다.</div>
+    <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeTournamentVoteModal()">닫기</button></div>`;
+  document.getElementById('modal-content').innerHTML = html;
+  document.getElementById('modal-backdrop').classList.add('open');
+}
+
+window.castTournamentVote = async function(id, matchIdx, choice) {
+  if (!currentUser) { requireLogin('투표하려면 로그인이 필요합니다.'); return; }
+  const t = activeTournamentData;
+  if (!t || t.id!==id) return;
+  const rounds = JSON.parse(JSON.stringify(t.rounds));
+  const match = rounds[t.currentRound][matchIdx];
+  if (!match.votes) match.votes={};
+  match.votes[currentUser.uid] = choice;
+  await updateDoc(doc(db,'tournaments',id), {rounds});
+};
+
+window.closeTournamentVoteModal = function() {
+  if (activeTournamentUnsub) { activeTournamentUnsub(); activeTournamentUnsub=null; }
+  activeTournamentData = null;
+  closeModal();
+};
+
+window.advanceTournamentRound = async function(id) {
+  if (!isAdmin) return;
+  if (!confirm('현재 라운드 투표를 마감하고 다음 라운드로 진행할까요?')) return;
+  const tdoc = await getDoc(doc(db,'tournaments',id));
+  if (!tdoc.exists()) return;
+  const t = {id:tdoc.id, ...tdoc.data()};
+  const round = t.rounds[t.currentRound];
+  const winners = round.map(match=>{
+    const votesA = Object.values(match.votes||{}).filter(v=>v==='a').length;
+    const votesB = Object.values(match.votes||{}).filter(v=>v==='b').length;
+    if (votesA===votesB) return Math.random()<0.5?match.a:match.b;
+    return votesA>votesB?match.a:match.b;
+  });
+  if (winners.length===1) {
+    await updateDoc(doc(db,'tournaments',id), {status:'done', winner: winners[0]});
+    alert(`🏆 우승곡: ${winners[0].songName}`);
+  } else {
+    const nextRound=[];
+    for (let i=0;i<winners.length;i+=2) nextRound.push({a:winners[i], b:winners[i+1], votes:{}});
+    const rounds=[...t.rounds, nextRound];
+    await updateDoc(doc(db,'tournaments',id), {rounds, currentRound: t.currentRound+1});
+  }
+  loadTournaments();
+};
+
+let rollingMessages = [];
+async function loadRollingMessages(memberId) {
+  try {
+    const snap = await getDocs(collection(db, 'rollingMessages'));
+    rollingMessages = snap.docs.map(d=>({id:d.id,...d.data()}))
+      .filter(r=>r.toMemberId===memberId)
+      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  } catch(e) { rollingMessages = []; }
+  renderRollingPaperList(memberId);
+}
+
+function renderRollingPaperList(memberId) {
+  const el = document.getElementById('rolling-paper-list');
+  if (!el) return;
+  if (rollingMessages.length===0) { el.innerHTML='<div style="font-size:13px;color:var(--text2)">아직 남겨진 메시지가 없습니다. 첫 메시지를 남겨보세요!</div>'; return; }
+  el.innerHTML = rollingMessages.map(r=>`<div style="background:var(--bg2);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px">
+    <div style="font-size:13px;line-height:1.6;white-space:pre-line">${r.message}</div>
+    <div class="flex-between" style="margin-top:6px">
+      <div style="font-size:11px;color:var(--text2)">- ${r.anonymous?'익명':(r.fromName||'회원')}</div>
+      ${(isAdmin||(currentUser&&r.fromUid===currentUser.uid))?`<button class="btn btn-sm btn-danger" onclick="deleteRollingMessage('${r.id}','${memberId}')"><i class="ti ti-trash" style="font-size:11px"></i></button>`:''}
+    </div>
+  </div>`).join('');
+}
+
+window.openAddRollingMessage = function(memberId) {
+  if (!currentUser) { requireLogin('롤링페이퍼 메시지를 남기려면 로그인이 필요합니다.'); return; }
+  openModal(`<div class="modal-title">💌 롤링페이퍼 메시지 남기기</div>
+    <textarea id="rp-message" rows="4" placeholder="따뜻한 한마디를 남겨주세요" style="width:100%;margin-bottom:10px"></textarea>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:14px"><input type="checkbox" id="rp-anon"> 익명으로 남기기</label>
+    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button>
+    <button class="btn btn-primary" onclick="submitRollingMessage('${memberId}')">남기기</button></div>`);
+};
+
+window.submitRollingMessage = async function(memberId) {
+  const message = document.getElementById('rp-message').value.trim();
+  if (!message) { alert('메시지를 입력해주세요.'); return; }
+  const anonymous = document.getElementById('rp-anon').checked;
+  await addDoc(collection(db,'rollingMessages'), {
+    toMemberId: memberId, message, anonymous,
+    fromUid: currentUser.uid, fromName: currentUser.displayName||currentUser.email,
+    createdAt: serverTimestamp()
+  });
+  closeModal();
+  loadRollingMessages(memberId);
+};
+
+window.deleteRollingMessage = async function(id, memberId) {
+  if (!confirm('이 메시지를 삭제할까요?')) return;
+  await deleteDoc(doc(db,'rollingMessages',id));
+  loadRollingMessages(memberId);
+};
+
 const UPDATES=[
+  {version:'v2.9',date:'2026.06.23',items:['노래 이상형월드컵 추가 — 명예의 전당 탭에서 운영진이 추천곡으로 토너먼트 개설, 회원 투표로 라운드 진행, 우승곡은 역대 우승곡 명단에 영구 기록','롤링페이퍼 추가 — 회원 프로필에서 서로에게 메시지 남기기 (익명 가능), 본인/운영진만 삭제 가능']},
   {version:'v2.8',date:'2026.06.23',items:['프로필에 "출석 도장판" 추가 — 전체 벙을 도장 형태로 표시, 참석/불참 한눈에 확인','프로필에 "같이 가장 많이 만난 멤버" TOP3 카드 추가','벙 카드에 "회고" 버튼 추가 — 참석 인원, 첫 참석자, 오랜만에 복귀한 멤버, 단골 멤버 등을 자동 정리해 카카오톡 공유용 텍스트로 생성']},
   {version:'v2.7',date:'2026.06.23',items:['[버그 수정] 정산 계산기에서 금액 입력 시 한 글자만 쳐도 커서가 사라지던 문제 수정']},
   {version:'v2.6',date:'2026.06.18',items:['모임비 정산 계산기 추가 — 사이드바 "정산" 탭, 항목별 금액·참가인원 입력 시 자동 분담 계산','벙 선택 모드(참석자 자동 연동) / 직접 입력 모드 둘 다 지원, 벙 카드에서도 바로 정산 진입 가능','정산 내역은 정산 탭에 저장되어 나중에 다시 확인 가능, 오픈채팅 송금용 복사 텍스트 자동 생성']},
