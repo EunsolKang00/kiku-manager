@@ -2170,6 +2170,7 @@ function renderMemberProfile(id) {
 }
 
 const UPDATES=[
+  {version:'v2.7',date:'2026.06.23',items:['[버그 수정] 정산 계산기에서 금액 입력 시 한 글자만 쳐도 커서가 사라지던 문제 수정']},
   {version:'v2.6',date:'2026.06.18',items:['모임비 정산 계산기 추가 — 사이드바 "정산" 탭, 항목별 금액·참가인원 입력 시 자동 분담 계산','벙 선택 모드(참석자 자동 연동) / 직접 입력 모드 둘 다 지원, 벙 카드에서도 바로 정산 진입 가능','정산 내역은 정산 탭에 저장되어 나중에 다시 확인 가능, 오픈채팅 송금용 복사 텍스트 자동 생성']},
   {version:'v2.5',date:'2026.06.18',items:['게시판(자유게시판/건의사항) 글쓰기·수정 시 사진 최대 4장 첨부 가능','사진은 본문 원하는 위치에 삽입 가능 (커서 위치에 [이미지] 표시 자동 삽입, 자유롭게 이동 가능)']},
   {version:'v2.4',date:'2026.06.18',items:['가로 스크롤 버그 근본 원인 수정 (레이아웃 구조 문제) + 긴 글은 일정 글자 수 이후 "더보기"로 처리','공지사항 작성자명도 연동된 프로필 이름을 우선 사용하도록 수정']},
@@ -2340,7 +2341,23 @@ window.updateSettlementItemField = function(id, field, value) {
   const it = settlementItems.find(x => x.id === id);
   if (!it) return;
   it[field] = field === 'amount' ? (parseInt(String(value).replace(/[^0-9]/g,''))||0) : value;
-  if (field === 'amount') renderSettlementItems(); else renderSettlementResult();
+  if (field === 'amount') {
+    // 입력칸을 통째로 다시 그리면 커서가 사라지므로, 1인당 금액 표시만 갱신
+    const perEl = document.getElementById('settlement-per-'+id);
+    if (perEl) {
+      const perPerson = it.participants.length > 0 ? Math.round(it.amount / it.participants.length) : 0;
+      perEl.textContent = `${it.participants.length}명 참여 · 1인당 ${perPerson.toLocaleString()}원`;
+    }
+    renderSettlementResult();
+  } else {
+    renderSettlementResult();
+  }
+};
+
+window.formatSettlementAmountInput = function(id, el) {
+  const it = settlementItems.find(x => x.id === id);
+  if (!it) return;
+  el.value = it.amount ? it.amount.toLocaleString() : '';
 };
 
 window.toggleSettlementParticipant = function(itemId, key) {
@@ -2360,7 +2377,7 @@ function renderSettlementItems() {
     return `<div style="border:0.5px solid var(--border);border-radius:var(--radius);padding:12px">
       <div class="flex" style="gap:8px;margin-bottom:10px">
         <input type="text" placeholder="항목명 (예: 식사)" value="${it.name}" style="flex:1" oninput="updateSettlementItemField('${it.id}','name',this.value)">
-        <input type="text" placeholder="금액" value="${it.amount?it.amount.toLocaleString():''}" style="width:110px;text-align:right" oninput="updateSettlementItemField('${it.id}','amount',this.value)">
+        <input type="text" placeholder="금액" value="${it.amount?it.amount.toLocaleString():''}" style="width:110px;text-align:right" oninput="updateSettlementItemField('${it.id}','amount',this.value)" onblur="formatSettlementAmountInput('${it.id}',this)">
         <span style="display:flex;align-items:center;font-size:13px;color:var(--text2)">원</span>
         <button class="btn btn-sm btn-danger" onclick="removeSettlementItem('${it.id}')"><i class="ti ti-trash"></i></button>
       </div>
@@ -2370,7 +2387,7 @@ function renderSettlementItems() {
           return `<label style="display:flex;align-items:center;gap:4px;font-size:13px;border:0.5px solid var(--border);border-radius:var(--radius);padding:4px 10px;cursor:pointer;${checked?'background:var(--bg2)':'color:var(--text3)'}"><input type="checkbox" ${checked?'checked':''} style="margin:0" onchange="toggleSettlementParticipant('${it.id}','${p.key}')">${p.name}</label>`;
         }).join('')}
       </div>
-      <div style="font-size:12px;color:var(--text2);margin-top:8px">${it.participants.length}명 참여 · 1인당 ${perPerson.toLocaleString()}원</div>
+      <div id="settlement-per-${it.id}" style="font-size:12px;color:var(--text2);margin-top:8px">${it.participants.length}명 참여 · 1인당 ${perPerson.toLocaleString()}원</div>
     </div>`;
   }).join('');
   renderSettlementResult();
