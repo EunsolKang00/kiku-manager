@@ -1755,6 +1755,7 @@ function renderBungs() {
         <div class="flex">${typeBadge}<strong>${b.name}</strong>${isPast?'<span class="badge badge-safe">완료</span>':'<span class="badge badge-new">예정</span>'}${settledBadge}</div>
         <div class="flex" style="gap:4px">
           <button class="btn btn-sm btn-info" onclick="openTemplate('${b.id}')"><i class="ti ti-speakerphone"></i> 공지</button>
+          ${isPast?`<button class="btn btn-sm" onclick="openBungRecap('${b.id}')"><i class="ti ti-sparkles"></i> 회고</button>`:''}
           <button class="btn btn-sm" onclick="openSettlement('${b.id}')"><i class="ti ti-calculator"></i> 정산</button>
           <button class="btn btn-sm edit-only" onclick="openEditBung('${b.id}')"><i class="ti ti-edit"></i> 수정</button>
           <button class="btn btn-sm btn-danger edit-only" onclick="deleteBung('${b.id}')"><i class="ti ti-trash"></i></button>
@@ -2141,6 +2142,36 @@ function renderMemberProfile(id) {
     <div style="display:flex;gap:6px">${monthlyData.map(d=>`<div style="flex:1;text-align:center;font-size:10px;color:var(--text2)">${d.label}</div>`).join('')}</div>
   </div>
   <div class="profile-card">
+    <div style="font-size:13px;font-weight:500;margin-bottom:10px">출석 도장판 (전체 벙 ${sortedBungs.length}개 중 참석 ${attended.length}개)</div>
+    ${sortedBungs.length===0?'<div style="font-size:13px;color:var(--text2)">아직 벙 기록이 없습니다.</div>':
+    `<div style="display:flex;flex-wrap:wrap;gap:4px">${sortedBungs.map(b=>{
+      const did=(b.attendees||[]).includes(m.id);
+      return `<div title="${formatDate(b.date)} ${b.name}${did?' · 참석':' · 불참'}" style="width:13px;height:13px;border-radius:3px;background:${did?'var(--info)':'var(--bg3)'}"></div>`;
+    }).join('')}</div>`}
+  </div>
+  ${(()=>{
+    const coCounts={};
+    bungs.forEach(b=>{
+      if(!(b.attendees||[]).includes(m.id))return;
+      (b.attendees||[]).forEach(oid=>{ if(oid===m.id)return; coCounts[oid]=(coCounts[oid]||0)+1; });
+    });
+    const coRanking=Object.entries(coCounts).map(([id,cnt])=>{
+      const om=members.find(x=>x.id===id);
+      return om?{name:om.name,photoURL:om.photoURL,count:cnt}:null;
+    }).filter(Boolean).sort((a,b)=>b.count-a.count).slice(0,3);
+    if(coRanking.length===0)return'';
+    return `<div class="profile-card">
+      <div style="font-size:13px;font-weight:500;margin-bottom:10px">🤝 같이 가장 많이 만난 멤버</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        ${coRanking.map((c,i)=>`<div style="display:flex;align-items:center;gap:8px;background:var(--bg2);border-radius:var(--radius);padding:8px 12px">
+          <span style="font-size:13px">${['🥇','🥈','🥉'][i]}</span>
+          ${c.photoURL?`<img src="${c.photoURL}" style="width:28px;height:28px;border-radius:50%;object-fit:cover">`:`<div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500">${c.name[0]}</div>`}
+          <div><div style="font-size:12px;font-weight:500">${c.name}</div><div style="font-size:11px;color:var(--text2)">${c.count}번 같이 참석</div></div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  })()}
+  <div class="profile-card">
     <div style="font-size:13px;font-weight:500;margin-bottom:10px">업적 (${unlocked.length}/${achvs.length})</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px">
       ${achvs.map(a=>{
@@ -2170,6 +2201,7 @@ function renderMemberProfile(id) {
 }
 
 const UPDATES=[
+  {version:'v2.8',date:'2026.06.23',items:['프로필에 "출석 도장판" 추가 — 전체 벙을 도장 형태로 표시, 참석/불참 한눈에 확인','프로필에 "같이 가장 많이 만난 멤버" TOP3 카드 추가','벙 카드에 "회고" 버튼 추가 — 참석 인원, 첫 참석자, 오랜만에 복귀한 멤버, 단골 멤버 등을 자동 정리해 카카오톡 공유용 텍스트로 생성']},
   {version:'v2.7',date:'2026.06.23',items:['[버그 수정] 정산 계산기에서 금액 입력 시 한 글자만 쳐도 커서가 사라지던 문제 수정']},
   {version:'v2.6',date:'2026.06.18',items:['모임비 정산 계산기 추가 — 사이드바 "정산" 탭, 항목별 금액·참가인원 입력 시 자동 분담 계산','벙 선택 모드(참석자 자동 연동) / 직접 입력 모드 둘 다 지원, 벙 카드에서도 바로 정산 진입 가능','정산 내역은 정산 탭에 저장되어 나중에 다시 확인 가능, 오픈채팅 송금용 복사 텍스트 자동 생성']},
   {version:'v2.5',date:'2026.06.18',items:['게시판(자유게시판/건의사항) 글쓰기·수정 시 사진 최대 4장 첨부 가능','사진은 본문 원하는 위치에 삽입 가능 (커서 위치에 [이미지] 표시 자동 삽입, 자유롭게 이동 가능)']},
@@ -2534,6 +2566,58 @@ window.openTemplate = function(id) {
 
 window.copyTemplate = function() {
   const text=document.getElementById('template-text').innerText;
+  navigator.clipboard.writeText(text).then(()=>{
+    const btn=event.target.closest('button');
+    btn.innerHTML='<i class="ti ti-check"></i> 복사됨!';
+    setTimeout(()=>{btn.innerHTML='<i class="ti ti-copy"></i> 복사';},2000);
+  });
+};
+
+window.openBungRecap = function(id) {
+  const b = bungs.find(x=>x.id===id); if(!b) return;
+  const allSorted = [...bungs].sort((a,c)=>new Date(a.date)-new Date(c.date));
+  const idx = allSorted.findIndex(x=>x.id===id);
+  const priorBungs = allSorted.slice(0, idx);
+  const attendeeIds = b.attendees||[];
+  const attendeeMembers = attendeeIds.map(aid=>members.find(x=>x.id===aid)).filter(Boolean);
+  const firstTimers = attendeeMembers.filter(m=>!priorBungs.some(pb=>(pb.attendees||[]).includes(m.id)));
+  let comeback=null, maxGap=-1;
+  attendeeMembers.forEach(m=>{
+    if(firstTimers.includes(m)) return;
+    let lastIdx=-1;
+    priorBungs.forEach((pb,i)=>{ if((pb.attendees||[]).includes(m.id)) lastIdx=i; });
+    if(lastIdx===-1) return;
+    const gap = priorBungs.length - 1 - lastIdx;
+    if(gap>maxGap){ maxGap=gap; comeback={member:m, gap}; }
+  });
+  const host = b.hostId ? members.find(x=>x.id===b.hostId) : null;
+  const totalSoFar = idx+1;
+  const veteran = [...attendeeMembers].sort((a,c)=>{
+    const ca = allSorted.slice(0,idx+1).filter(x=>(x.attendees||[]).includes(a.id)).length;
+    const cc = allSorted.slice(0,idx+1).filter(x=>(x.attendees||[]).includes(c.id)).length;
+    return cc-ca;
+  })[0];
+  const veteranCount = veteran ? allSorted.slice(0,idx+1).filter(x=>(x.attendees||[]).includes(veteran.id)).length : 0;
+
+  const lines = [];
+  lines.push(`🎤 ${b.name} 회고`);
+  lines.push(`📅 ${formatDate(b.date)}${b.place?' · '+b.place:''}`);
+  lines.push(`👥 참석 ${attendeeMembers.length}명: ${attendeeMembers.map(m=>m.name).join(', ')||'없음'}`);
+  if(host) lines.push(`👑 벙주: ${host.name}`);
+  if(firstTimers.length>0) lines.push(`🌱 첫 참석: ${firstTimers.map(m=>m.name).join(', ')}`);
+  if(comeback && comeback.gap>=2) lines.push(`🎉 오랜만에 등장: ${comeback.member.name} (벙 ${comeback.gap}번 쉬고 복귀!)`);
+  if(veteran && veteranCount>=3) lines.push(`💎 이 멤버 단골: ${veteran.name} (지금까지 ${veteranCount}번째 참석)`);
+  lines.push(`📊 KIKU 통산 ${totalSoFar}번째 벙`);
+  const recapText = lines.join('\n');
+
+  openModal(`<div class="modal-title"><i class="ti ti-sparkles" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>벙 회고</div>
+    <div class="template-box" id="recap-text" style="white-space:pre-line">${recapText}</div>
+    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">닫기</button>
+    <button class="btn btn-primary" onclick="copyRecapText()"><i class="ti ti-copy"></i> 복사</button></div>`);
+};
+
+window.copyRecapText = function() {
+  const text=document.getElementById('recap-text').innerText;
   navigator.clipboard.writeText(text).then(()=>{
     const btn=event.target.closest('button');
     btn.innerHTML='<i class="ti ti-check"></i> 복사됨!';
