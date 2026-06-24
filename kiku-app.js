@@ -2513,7 +2513,7 @@ function renderIdealCupCard(c) {
   return `<div class="hall-card" style="padding:0;overflow:hidden">
     <div style="display:flex;height:90px">
       ${thumbs.map(t=>`<div style="flex:1;background:var(--bg2);overflow:hidden;display:flex;align-items:center;justify-content:center">
-        ${t.imageUrl?`<img src="${t.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:`<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:20px"></i>`}
+        ${t.imageUrl?`<img src="${t.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:t.youtubeUrl?`<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:20px"></i>`:`<i class="ti ti-photo-off" style="color:var(--text2);font-size:20px"></i>`}
       </div>`).join('')}
     </div>
     <div style="padding:10px 12px">
@@ -2552,17 +2552,18 @@ function loadIdealCupDraftIntoState(d) {
 }
 
 function openIdealCupCreateModal(draftTitle, draftDesc) {
+  _icUnsavedActive = true;
   openModal(`<div class="modal-title">🏆 이상형월드컵 만들기</div>
     <input type="text" id="ic-title" placeholder="제목 (예: J-pop 솔로 가수 이상형월드컵)" value="${(draftTitle||'').replace(/"/g,'&quot;')}" style="width:100%;margin-bottom:8px">
     <textarea id="ic-desc" placeholder="간단한 설명" style="width:100%;min-height:50px;margin-bottom:14px">${draftDesc||''}</textarea>
     <div style="font-size:12px;font-weight:600;margin-bottom:6px">라인업 추가 <span id="ic-lineup-count" style="color:var(--text2);font-weight:400">0개</span></div>
     <div style="border:0.5px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:10px">
-      <input type="text" id="ic-ln-name" placeholder="이름 (예: 유우리)" style="width:100%;margin-bottom:6px">
-      <input type="text" id="ic-ln-desc" placeholder="설명 (선택)" style="width:100%;margin-bottom:6px">
-      <div style="font-size:11px;color:var(--text2);margin-bottom:4px">사진 첨부 또는 유튜브 링크 중 하나만 입력해주세요.</div>
-      <div class="flex" style="gap:6px;margin-bottom:6px">
-        <input type="file" id="ic-ln-file" accept="image/*" style="flex:1;font-size:12px">
-        <input type="text" id="ic-ln-yt" placeholder="유튜브 링크" style="flex:1">
+      <input type="text" id="ic-ln-name" placeholder="이름 (예: 유우리, 또는 김치찌개를 끓이는 티라노사우르스)" style="width:100%;margin-bottom:6px">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:4px">사진 첨부 / 이미지 링크 / 유튜브 링크 중 하나를 입력해주세요.</div>
+      <div class="flex" style="gap:6px;margin-bottom:6px;flex-wrap:wrap">
+        <input type="file" id="ic-ln-file" accept="image/*" style="flex:1;min-width:120px;font-size:12px">
+        <input type="text" id="ic-ln-imgurl" placeholder="이미지 링크 (URL)" style="flex:1;min-width:120px">
+        <input type="text" id="ic-ln-yt" placeholder="유튜브 링크" style="flex:1;min-width:120px">
       </div>
       <button class="btn btn-sm" onclick="addIdealCupLineupDraft()"><i class="ti ti-plus"></i> 라인업에 추가</button>
     </div>
@@ -2612,7 +2613,7 @@ window.openIdealCupDraftViewer = async function() {
     ${d.description?`<div style="font-size:12px;color:var(--text2);margin-bottom:8px">${d.description}</div>`:''}
     <div style="font-size:11px;color:var(--text2);margin-bottom:12px">라인업 ${lineups.length}개${updated?' · '+formatDate(updated)+' 저장':''}</div>
     <div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px">
-      ${lineups.map(l=>`<div style="flex-shrink:0;width:48px;height:48px;border-radius:6px;overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${l.imageUrl?`<img src="${l.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:'<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:14px"></i>'}</div>`).join('')}
+      ${lineups.map(l=>`<div style="flex-shrink:0;width:48px;height:48px;border-radius:6px;overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${l.imageUrl?`<img src="${l.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:l.youtubeUrl?'<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:14px"></i>':'<i class="ti ti-photo-off" style="color:var(--text2);font-size:14px"></i>'}</div>`).join('')}
     </div>
     <div class="flex" style="justify-content:flex-end;gap:8px">
       <button class="btn btn-danger" onclick="deleteIdealCupDraft()">삭제</button>
@@ -2644,23 +2645,27 @@ window.deleteIdealCupDraft = async function() {
 window.addIdealCupLineupDraft = function() {
   const name = document.getElementById('ic-ln-name').value.trim();
   if (!name) { alert('라인업 이름을 입력해주세요.'); return; }
-  const desc = document.getElementById('ic-ln-desc').value.trim();
   const fileInput = document.getElementById('ic-ln-file');
   const file = fileInput.files[0] || null;
+  const imgUrlRaw = document.getElementById('ic-ln-imgurl').value.trim();
   const ytRaw = document.getElementById('ic-ln-yt').value.trim();
-  if (file && ytRaw) { alert('사진과 유튜브 링크 중 하나만 입력해주세요.'); return; }
-  let youtubeUrl = '';
+  const filledCount = [file, imgUrlRaw, ytRaw].filter(Boolean).length;
+  if (filledCount > 1) { alert('사진 첨부 / 이미지 링크 / 유튜브 링크 중 하나만 입력해주세요.'); return; }
+  if (filledCount === 0) { alert('사진을 첨부하거나, 이미지 링크 또는 유튜브 링크를 입력해주세요.'); return; }
+  let youtubeUrl = '', imageUrl = '';
   if (ytRaw) {
     if (!getYoutubeId(ytRaw)) { alert('유효한 유튜브 링크가 아닙니다.'); return; }
     youtubeUrl = ytRaw;
+  } else if (imgUrlRaw) {
+    if (!/^https?:\/\//i.test(imgUrlRaw)) { alert('유효한 이미지 링크(URL)가 아닙니다.'); return; }
+    imageUrl = imgUrlRaw;
   }
-  if (!file && !youtubeUrl) { alert('사진을 첨부하거나 유튜브 링크를 입력해주세요.'); return; }
   const id = 'L' + (++_icDraftCounter);
-  const previewUrl = file ? URL.createObjectURL(file) : null;
-  _icDraftLineups.push({ id, name, desc, file, youtubeUrl, previewUrl });
+  const previewUrl = file ? URL.createObjectURL(file) : (imageUrl || null);
+  _icDraftLineups.push({ id, name, desc:'', file, youtubeUrl, imageUrl, previewUrl });
   document.getElementById('ic-ln-name').value = '';
-  document.getElementById('ic-ln-desc').value = '';
   fileInput.value = '';
+  document.getElementById('ic-ln-imgurl').value = '';
   document.getElementById('ic-ln-yt').value = '';
   renderIdealCupDraftList();
 };
@@ -2673,7 +2678,9 @@ function renderIdealCupDraftList() {
     : _icDraftLineups.map((l,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px;border-bottom:0.5px solid var(--border)">
         ${l.previewUrl
           ? `<img src="${l.previewUrl}" style="width:36px;height:36px;border-radius:6px;object-fit:cover">`
-          : `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);display:flex;align-items:center;justify-content:center"><i class="ti ti-brand-youtube" style="font-size:16px;color:var(--text2)"></i></div>`}
+          : l.youtubeUrl
+            ? `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);display:flex;align-items:center;justify-content:center"><i class="ti ti-brand-youtube" style="font-size:16px;color:var(--text2)"></i></div>`
+            : `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);display:flex;align-items:center;justify-content:center"><i class="ti ti-photo-off" style="font-size:16px;color:var(--text2)"></i></div>`}
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;font-weight:500">${l.name}</div>
           ${l.desc?`<div style="font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.desc}</div>`:''}
@@ -2717,6 +2724,7 @@ window.submitIdealCup = async function() {
     });
     _icDraftLineups = [];
     try { await deleteDoc(doc(db,'idealCupDrafts',currentUser.uid)); } catch(e) {}
+    _icUnsavedActive = false;
     closeModal();
     loadIdealCups();
   } catch(e) {
@@ -2802,6 +2810,7 @@ window.startIdealCupBracket = function(cupId, size) {
   const entries = size < total ? shuffleArray(cup.lineups).slice(0, size) : [...cup.lineups];
   const matches0 = buildBracketRound0(entries, size);
   _icPlay = { cupId, cupTitle: cup.title, roundMatches: matches0, matchIdx: 0, roundWinners: [], history: [], finalWinner: null };
+  _icUnsavedActive = true;
   renderIdealCupPlayMatch();
 };
 
@@ -2867,9 +2876,7 @@ function advanceIdealCupLocal(winner, loser, isBye) {
 }
 
 window.closeIdealCupPlay = function() {
-  if (!confirm('진행 중인 월드컵을 그만할까요? 결과는 저장되지 않습니다.')) return;
-  _icPlay = null;
-  closeModal();
+  if (closeModal()) _icPlay = null;
 };
 
 function finishIdealCupPlay(winner) {
@@ -2895,6 +2902,7 @@ function finishIdealCupPlay(winner) {
 
 window.discardIdealCupResult = function() {
   _icPlay = null;
+  _icUnsavedActive = false;
   closeModal();
 };
 
@@ -2927,6 +2935,7 @@ window.submitIdealCupResult = async function(winnerId) {
       });
     }
     _icPlay = null;
+    _icUnsavedActive = false;
     closeModal();
     loadIdealCups();
   } catch(e) {
@@ -2952,7 +2961,7 @@ window.openIdealCupRanking = async function(cupId) {
       const rate = l.matches ? Math.round((l.wins||0)/l.matches*100) : 0;
       return `<div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:0.5px solid var(--border)">
         <div style="width:22px;text-align:center;font-weight:700;color:var(--text2)">${i+1}</div>
-        <div style="width:36px;height:36px;border-radius:6px;overflow:hidden;background:var(--bg2);flex-shrink:0;display:flex;align-items:center;justify-content:center">${l.imageUrl?`<img src="${l.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:'<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:14px"></i>'}</div>
+        <div style="width:36px;height:36px;border-radius:6px;overflow:hidden;background:var(--bg2);flex-shrink:0;display:flex;align-items:center;justify-content:center">${l.imageUrl?`<img src="${l.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:l.youtubeUrl?'<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:14px"></i>':'<i class="ti ti-photo-off" style="color:var(--text2);font-size:14px"></i>'}</div>
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.name}</div>
           <div style="font-size:11px;color:var(--text2)">우승 ${l.championCount||0}회 · 매치 승률 ${rate}% (${l.wins||0}/${l.matches||0})</div>
@@ -3041,6 +3050,10 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v3.9',date:'2026.06.24',items:['이상형 월드컵 라인업 등록 화면에서 "설명" 입력칸 제거 — 이름에 바로 설명을 적는 방식으로 통일 (예: "김치찌개를 끓이는 티라노사우르스")','라인업 등록 시 사진 첨부 / 이미지 링크 / 유튜브 링크 중 하나는 다시 필수로 변경 (v3.8에서 선택사항으로 바꿨던 것을 되돌림)']},
+  {version:'v3.8',date:'2026.06.24',items:['이상형 월드컵 라인업 등록 시 사진/링크 없이 이름만으로도 등록 가능 (예: "김치찌개를 끓이는 티라노사우르스" 처럼 이름에 직접 설명을 적는 방식)','사진·영상이 없는 라인업은 목록·랭킹·플레이 화면에서 빈 이미지 아이콘으로 표시']},
+  {version:'v3.7',date:'2026.06.24',items:['이상형 월드컵 라인업 등록 시 "이미지 링크(URL)" 직접 입력 옵션 추가 — 사진 첨부 / 이미지 링크 / 유튜브 링크 중 하나 선택 가능']},
+  {version:'v3.6',date:'2026.06.24',items:['이상형 월드컵 제작 중 / 플레이 중에는 바탕 클릭이나 "취소"·"그만하기" 버튼을 눌러도 한 번 더 확인하도록 변경 — 실수로 화면이 꺼져서 작업 내용이 날아가는 것을 방지']},
   {version:'v3.5',date:'2026.06.24',items:['이상형 월드컵 목록 화면에 "임시저장 확인" 버튼 추가 — 제목/설명/라인업 개수와 썸네일을 미리 보고 "이어서 작성" 또는 "삭제" 선택 가능']},
   {version:'v3.4',date:'2026.06.24',items:['이상형 월드컵 카드에 "댓글" 버튼 추가 — 플레이 후 남겨진 우승 코멘트를 모아서 최신순으로 확인 가능','이상형 월드컵 제작 중 "임시저장" 기능 추가 — 계정별로 1개씩 저장되며, 다음에 "월드컵 만들기"를 눌렀을 때 이어서 작성할지 선택할 수 있음 (사진도 임시저장 시점에 미리 업로드되어 유지됨)','월드컵 만들기 완료 시 임시저장본은 자동으로 삭제됨']},
   {version:'v3.3',date:'2026.06.24',items:['이상형 월드컵 플레이 기능 추가 — 강수 선택 후 랜덤 대진표 생성, 1대1로 클릭하며 진출하는 방식','라인업 개수가 선택한 강수에 딱 맞지 않으면 부전승을 자동 배정해 대진표를 맞춤','사진 라인업과 유튜브 영상 라인업 모두 동일하게 "선택" 버튼으로 통일 (영상은 큰 화면으로 그 자리에서 바로 재생)','최종 우승 결정 시 우승자를 사진과 함께 보여주고, 로그인 회원은 한줄 코멘트 작성 가능','랭킹 화면 추가 — 라인업별 최종 우승 횟수와 매치 승률을 함께 표시']},
@@ -3563,7 +3576,15 @@ function updateEditMode(){
 }
 
 function openModal(html){document.getElementById('modal-content').innerHTML=html;document.getElementById('modal-backdrop').classList.add('open');}
-window.closeModal = function(){document.getElementById('modal-backdrop').classList.remove('open');};
+let _icUnsavedActive = false; // 이상형월드컵 제작/플레이 중 닫기 보호
+window.closeModal = function(){
+  if (_icUnsavedActive) {
+    if (!confirm('작성/진행 중인 내용이 사라집니다. 정말 닫을까요?')) return false;
+    _icUnsavedActive = false;
+  }
+  document.getElementById('modal-backdrop').classList.remove('open');
+  return true;
+};
 // 텍스트 드래그 중 마우스가 배경으로 나가서 click이 발생해도 닫히지 않도록,
 // mousedown이 배경 자체에서 "시작"된 경우에만 닫히도록 처리 (드래그 시작점이 모달 내부면 무시)
 let modalMouseDownOnBackdrop = false;
