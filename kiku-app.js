@@ -483,6 +483,14 @@ function renderBoardList() {
   }).join('');
 }
 
+window.searchYoutubeFor = function(songId, artistId) {
+  const song = document.getElementById(songId)?.value.trim()||'';
+  const artist = document.getElementById(artistId)?.value.trim()||'';
+  if (!song) { alert('곡명을 먼저 입력해주세요.'); return; }
+  const q = encodeURIComponent(`${song} ${artist}`.trim());
+  window.open(`https://www.youtube.com/results?search_query=${q}`, '_blank');
+};
+
 window.openAddPost = function() {
   if (!currentUser) return requireLogin('글쓰기는 로그인 후 이용할 수 있습니다.');
   const isSuggestion = currentBoardType === 'suggestion';
@@ -492,6 +500,13 @@ window.openAddPost = function() {
       <div class="form-row">
         <div class="form-group"><label>곡명</label><input type="text" id="p-song" placeholder="예: Lemon" autofocus></div>
         <div class="form-group"><label>아티스트</label><input type="text" id="p-artist" placeholder="예: 요네즈 켄시"></div>
+      </div>
+      <div class="form-group"><label>유튜브 링크 (선택)</label>
+        <div class="flex" style="gap:6px">
+          <input type="text" id="p-youtube" placeholder="https://youtu.be/..." style="flex:1">
+          <button type="button" class="btn btn-sm" onclick="searchYoutubeFor('p-song','p-artist')"><i class="ti ti-search"></i> 유튜브에서 찾기</button>
+        </div>
+        <div style="font-size:11px;color:var(--text2);margin-top:4px">⚠️ 유튜브 링크가 없으면 이 곡은 노래 이상형월드컵 후보에 들어갈 수 없어요.</div>
       </div>
       <div class="form-group"><label>추천 이유 (선택)</label><textarea id="p-content" placeholder="이 노래를 추천하는 이유를 적어주세요" style="min-height:100px"></textarea></div>
       <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="addPost()">등록</button></div>`);
@@ -514,12 +529,14 @@ window.openAddPost = function() {
 
 window.addPost = async function() {
   const isSong = currentBoardType === 'song';
-  let title, songName, artistName;
+  let title, songName, artistName, youtubeUrl='';
   if (isSong) {
     songName = document.getElementById('p-song').value.trim();
     artistName = document.getElementById('p-artist').value.trim();
     if (!songName) { alert('곡명을 입력해주세요.'); return; }
     title = artistName ? `${songName} - ${artistName}` : songName;
+    youtubeUrl = document.getElementById('p-youtube').value.trim();
+    if (youtubeUrl && !getYoutubeId(youtubeUrl)) { alert('유튜브 링크 형식이 올바르지 않아요. 링크를 다시 확인해주세요.'); return; }
   } else {
     title = document.getElementById('p-title').value.trim();
   }
@@ -547,7 +564,7 @@ window.addPost = async function() {
     commentCount: 0,
     createdAt: serverTimestamp(),
   };
-  if (isSong) { data.songName = songName; data.artistName = artistName; }
+  if (isSong) { data.songName = songName; data.artistName = artistName; data.youtubeUrl = youtubeUrl; }
   await addDoc(collection(db, 'posts'), data);
   postImageFiles = [];
   closeModal();
@@ -1080,6 +1097,12 @@ function isCalcDay() {
   const cd = getCalcDate();
   return TODAY.getDate()===cd.getDate() && TODAY.getMonth()===cd.getMonth() && TODAY.getFullYear()===cd.getFullYear();
 }
+function getYoutubeId(url) {
+  if (!url) return null;
+  const m = url.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
 function formatDate(d) {
   if (!d) return '-';
   const dt = typeof d==='string' ? new Date(d) : d;
@@ -1559,8 +1582,8 @@ function dateSeed(d) {
 }
 
 function getSongPool() {
-  const fromPlaylist = playlist.map(p => ({songName:p.songName, artistName:p.artistName||'', source:'playlist', addedBy:p.addedBy||'운영진'}));
-  const fromBoard = posts.filter(p=>p.type==='song' && p.songName).map(p => ({songName:p.songName, artistName:p.artistName||'', source:'board', addedBy:p.anonymous?'익명':(p.authorName||'회원')}));
+  const fromPlaylist = playlist.map(p => ({songName:p.songName, artistName:p.artistName||'', youtubeUrl:p.youtubeUrl||'', source:'playlist', addedBy:p.addedBy||'운영진'}));
+  const fromBoard = posts.filter(p=>p.type==='song' && p.songName).map(p => ({songName:p.songName, artistName:p.artistName||'', youtubeUrl:p.youtubeUrl||'', source:'board', addedBy:p.anonymous?'익명':(p.authorName||'회원')}));
   return [...fromPlaylist, ...fromBoard];
 }
 
@@ -1598,6 +1621,13 @@ window.openPlaylistManager = function() {
       <div class="form-group"><label>곡명</label><input type="text" id="pl-song" placeholder="예: Lemon"></div>
       <div class="form-group"><label>아티스트</label><input type="text" id="pl-artist" placeholder="예: 요네즈 켄시"></div>
     </div>
+    <div class="form-group"><label>유튜브 링크 (선택)</label>
+      <div class="flex" style="gap:6px">
+        <input type="text" id="pl-youtube" placeholder="https://youtu.be/..." style="flex:1">
+        <button type="button" class="btn btn-sm" onclick="searchYoutubeFor('pl-song','pl-artist')"><i class="ti ti-search"></i> 유튜브에서 찾기</button>
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-top:4px">⚠️ 유튜브 링크가 없으면 이 곡은 노래 이상형월드컵 후보에 들어갈 수 없어요.</div>
+    </div>
     <button class="btn btn-primary" style="margin-bottom:14px" onclick="addPlaylistSong()"><i class="ti ti-plus"></i> 추가</button>
     <div style="font-size:13px;font-weight:500;margin-bottom:8px">등록된 플레이리스트 (${playlist.length}곡)</div>
     <div id="playlist-manage-list" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto;margin-bottom:14px"></div>
@@ -1610,7 +1640,7 @@ function renderPlaylistManager() {
   if (!el) return;
   if (playlist.length === 0) { el.innerHTML = '<div style="font-size:13px;color:var(--text2)">등록된 곡이 없습니다.</div>'; return; }
   el.innerHTML = playlist.map(p => `<div class="flex-between" style="background:var(--bg2);border-radius:var(--radius);padding:8px 10px">
-    <div><span style="font-size:13px;font-weight:500">${p.songName}</span>${p.artistName?`<span style="font-size:12px;color:var(--text2);margin-left:6px">${p.artistName}</span>`:''}</div>
+    <div><span style="font-size:13px;font-weight:500">${p.songName}</span>${p.artistName?`<span style="font-size:12px;color:var(--text2);margin-left:6px">${p.artistName}</span>`:''}${p.youtubeUrl?'<span style="font-size:11px;margin-left:6px" title="유튜브 링크 등록됨">🎬</span>':''}</div>
     <button class="btn btn-sm btn-danger" onclick="deletePlaylistSong('${p.id}')"><i class="ti ti-trash"></i></button>
   </div>`).join('');
 }
@@ -1619,10 +1649,13 @@ window.addPlaylistSong = async function() {
   if (!isAdmin) return;
   const songName = document.getElementById('pl-song').value.trim();
   const artistName = document.getElementById('pl-artist').value.trim();
+  const youtubeUrl = document.getElementById('pl-youtube').value.trim();
   if (!songName) { alert('곡명을 입력해주세요.'); return; }
-  await addDoc(collection(db, 'playlist'), {songName, artistName, addedBy: currentUser.displayName||currentUser.email, createdAt: serverTimestamp()});
+  if (youtubeUrl && !getYoutubeId(youtubeUrl)) { alert('유튜브 링크 형식이 올바르지 않아요. 링크를 다시 확인해주세요.'); return; }
+  await addDoc(collection(db, 'playlist'), {songName, artistName, youtubeUrl, addedBy: currentUser.displayName||currentUser.email, createdAt: serverTimestamp()});
   document.getElementById('pl-song').value = '';
   document.getElementById('pl-artist').value = '';
+  document.getElementById('pl-youtube').value = '';
 };
 
 window.deletePlaylistSong = async function(id) {
@@ -2273,11 +2306,11 @@ function getUniqueSongPool() {
 let _tnPool = [];
 window.openCreateTournament = function() {
   if (!isAdmin) return;
-  _tnPool = getUniqueSongPool();
-  if (_tnPool.length<2) { alert('토너먼트를 시작하려면 추천곡이 2곡 이상 필요합니다. (플레이리스트 또는 노래 추천 게시판에 곡을 추가해주세요)'); return; }
+  _tnPool = getUniqueSongPool().filter(p=>getYoutubeId(p.youtubeUrl));
+  if (_tnPool.length<2) { alert('유튜브 링크가 등록된 추천곡이 2곡 이상 필요합니다. 플레이리스트나 노래 추천 게시판에서 곡 등록 시 유튜브 링크를 함께 입력해주세요.'); return; }
   openModal(`<div class="modal-title">🎶 노래 이상형월드컵 시작</div>
     <input type="text" id="tn-title" placeholder="토너먼트 이름 (예: 2026년 6월 이상형월드컵)" style="width:100%;margin-bottom:10px">
-    <div style="font-size:12px;color:var(--text2);margin-bottom:8px">참가곡을 선택하세요. 선택한 개수 중 2의 거듭수(최대 16곡)로 잘라 진행됩니다.</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:8px">참가곡을 선택하세요. 선택한 개수 중 2의 거듭수(최대 16곡)로 잘라 진행됩니다. (유튜브 링크가 등록된 곡만 표시됩니다)</div>
     <div style="max-height:260px;overflow-y:auto;border:0.5px solid var(--border);border-radius:var(--radius);padding:8px;margin-bottom:14px">
       ${_tnPool.map((p,i)=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;font-size:13px">
         <input type="checkbox" class="tn-song-check" value="${i}">
@@ -2299,11 +2332,11 @@ window.createTournamentConfirm = async function() {
   selected = selected.slice(0,bracketSize);
   const round0 = [];
   for (let i=0;i<selected.length;i+=2) {
-    round0.push({a:{songName:selected[i].songName,artistName:selected[i].artistName||''}, b:{songName:selected[i+1].songName,artistName:selected[i+1].artistName||''}, votes:{}});
+    round0.push({a:{songName:selected[i].songName,artistName:selected[i].artistName||'',youtubeUrl:selected[i].youtubeUrl||''}, b:{songName:selected[i+1].songName,artistName:selected[i+1].artistName||'',youtubeUrl:selected[i+1].youtubeUrl||''}, votes:{}});
   }
   try {
     await addDoc(collection(db,'tournaments'), {
-      title, candidates: selected.map(s=>({songName:s.songName,artistName:s.artistName||''})),
+      title, candidates: selected.map(s=>({songName:s.songName,artistName:s.artistName||'',youtubeUrl:s.youtubeUrl||''})),
       rounds:[{matches:round0}], currentRound:0, status:'voting', winner:null, createdAt: serverTimestamp()
     });
     closeModal();
@@ -2337,13 +2370,19 @@ function renderTournamentVoteModal() {
       const myVote = myUid ? (match.votes||{})[myUid] : null;
       return `<div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:10px">
         <div style="display:flex;align-items:center;gap:8px">
-          <button class="btn btn-sm" style="flex:1;text-align:left;${myVote==='a'?'background:var(--info-bg);border-color:var(--info)':''}" onclick="castTournamentVote('${t.id}',${mi},'a')">
-            ${match.a.songName}${match.a.artistName?` <span style="color:var(--text2);font-size:11px">- ${match.a.artistName}</span>`:''}<br><span style="font-size:11px;color:var(--text2)">${votesA}표</span>
-          </button>
+          <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+            <button class="btn btn-sm" style="text-align:left;${myVote==='a'?'background:var(--info-bg);border-color:var(--info)':''}" onclick="castTournamentVote('${t.id}',${mi},'a')">
+              ${match.a.songName}${match.a.artistName?` <span style="color:var(--text2);font-size:11px">- ${match.a.artistName}</span>`:''}<br><span style="font-size:11px;color:var(--text2)">${votesA}표</span>
+            </button>
+            ${match.a.youtubeUrl?`<button class="btn btn-sm" style="font-size:11px" onclick="toggleTournamentPlayer('tn-yt-${mi}a','${getYoutubeId(match.a.youtubeUrl)}')"><i class="ti ti-player-play"></i> 들어보기</button><div id="tn-yt-${mi}a"></div>`:''}
+          </div>
           <span style="font-size:11px;color:var(--text2)">VS</span>
-          <button class="btn btn-sm" style="flex:1;text-align:left;${myVote==='b'?'background:var(--info-bg);border-color:var(--info)':''}" onclick="castTournamentVote('${t.id}',${mi},'b')">
-            ${match.b.songName}${match.b.artistName?` <span style="color:var(--text2);font-size:11px">- ${match.b.artistName}</span>`:''}<br><span style="font-size:11px;color:var(--text2)">${votesB}표</span>
-          </button>
+          <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+            <button class="btn btn-sm" style="text-align:left;${myVote==='b'?'background:var(--info-bg);border-color:var(--info)':''}" onclick="castTournamentVote('${t.id}',${mi},'b')">
+              ${match.b.songName}${match.b.artistName?` <span style="color:var(--text2);font-size:11px">- ${match.b.artistName}</span>`:''}<br><span style="font-size:11px;color:var(--text2)">${votesB}표</span>
+            </button>
+            ${match.b.youtubeUrl?`<button class="btn btn-sm" style="font-size:11px" onclick="toggleTournamentPlayer('tn-yt-${mi}b','${getYoutubeId(match.b.youtubeUrl)}')"><i class="ti ti-player-play"></i> 들어보기</button><div id="tn-yt-${mi}b"></div>`:''}
+          </div>
         </div>
       </div>`;
     }).join('')}
@@ -2353,6 +2392,13 @@ function renderTournamentVoteModal() {
   document.getElementById('modal-content').innerHTML = html;
   document.getElementById('modal-backdrop').classList.add('open');
 }
+
+window.toggleTournamentPlayer = function(containerId, videoId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  el.innerHTML = `<iframe width="100%" height="160" src="https://www.youtube.com/embed/${videoId}?autoplay=1" title="YouTube player" style="border:none;border-radius:var(--radius);margin-top:4px" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
+};
 
 window.castTournamentVote = async function(id, matchIdx, choice) {
   if (!currentUser) { requireLogin('투표하려면 로그인이 필요합니다.'); return; }
@@ -2452,6 +2498,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v3.1',date:'2026.06.23',items:['노래 추천 게시판·플레이리스트에 유튜브 링크 입력 추가, "유튜브에서 찾기" 버튼으로 검색 결과 새 탭 바로 열기','유튜브 링크 없는 곡은 이상형월드컵 후보 목록에서 자동 제외, 입력 화면에 안내 문구 표시','이상형월드컵 투표 화면에서 "들어보기" 버튼으로 곡을 그 자리에서 바로 재생 가능']},
   {version:'v3.0.1',date:'2026.06.23',items:['[버그 수정] 노래 이상형월드컵 "시작" 버튼이 반응 없던 문제 수정 — Firestore가 지원하지 않는 중첩 배열 구조가 원인, 데이터 구조 변경 및 오류 발생 시 알림 표시 추가']},
   {version:'v3.0',date:'2026.06.23',items:['"놀이터" 탭 신설 — 노래 이상형월드컵을 명예의 전당에서 분리해 독립 탭으로 이동','"리포트" 탭을 "통계" 탭에 통합 (월별/분기별 리포트는 통계 화면 하단에서 확인)']},
   {version:'v2.9',date:'2026.06.23',items:['노래 이상형월드컵 추가 — 명예의 전당 탭에서 운영진이 추천곡으로 토너먼트 개설, 회원 투표로 라운드 진행, 우승곡은 역대 우승곡 명단에 영구 기록','롤링페이퍼 추가 — 회원 프로필에서 서로에게 메시지 남기기 (익명 가능), 본인/운영진만 삭제 가능']},
