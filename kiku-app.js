@@ -2501,7 +2501,7 @@ function renderIdealCupList() {
     </div>
     ${sorted.length===0
       ? `<div class="empty-state"><i class="ti ti-trophy"></i>아직 만들어진 이상형월드컵이 없습니다.</div>`
-      : `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">${sorted.map(c=>renderIdealCupCard(c)).join('')}</div>`}
+      : `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px">${sorted.map(c=>renderIdealCupCard(c)).join('')}</div>`}
   `;
 }
 
@@ -2520,11 +2520,11 @@ function renderIdealCupCard(c) {
       <div style="font-size:13px;font-weight:600;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.title}</div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.description||''}</div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:8px">참가 ${(c.lineups||[]).length}개 · ${c.creatorName||'회원'}</div>
-      <div class="flex" style="gap:6px;flex-wrap:wrap">
-        <button class="btn btn-sm btn-primary" style="white-space:nowrap" onclick="openIdealCupPlay('${c.id}')"><i class="ti ti-player-play"></i> 시작</button>
-        <button class="btn btn-sm" style="white-space:nowrap" onclick="openIdealCupRanking('${c.id}')"><i class="ti ti-list"></i> 랭킹</button>
-        <button class="btn btn-sm" style="white-space:nowrap" onclick="openIdealCupComments('${c.id}')"><i class="ti ti-message-circle"></i> 댓글</button>
-        ${canManage?`<button class="btn btn-sm btn-danger" onclick="deleteIdealCup('${c.id}')"><i class="ti ti-trash"></i></button>`:''}
+      <div class="flex" style="gap:6px;flex-wrap:nowrap">
+        <button class="btn btn-sm btn-primary" style="white-space:nowrap;flex:1;min-width:0;padding-left:6px;padding-right:6px" onclick="openIdealCupPlay('${c.id}')"><i class="ti ti-player-play"></i> 시작</button>
+        <button class="btn btn-sm" style="white-space:nowrap;flex:1;min-width:0;padding-left:6px;padding-right:6px" onclick="openIdealCupRanking('${c.id}')"><i class="ti ti-list"></i> 랭킹</button>
+        <button class="btn btn-sm" style="white-space:nowrap;flex:1;min-width:0;padding-left:6px;padding-right:6px" onclick="openIdealCupComments('${c.id}')"><i class="ti ti-message-circle"></i> 댓글</button>
+        ${canManage?`<button class="btn btn-sm btn-danger" style="flex:0 0 auto" onclick="deleteIdealCup('${c.id}')"><i class="ti ti-trash"></i></button>`:''}
       </div>
     </div>
   </div>`;
@@ -3050,6 +3050,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v3.12',date:'2026.06.24',items:['이상형 월드컵 카드의 시작/랭킹/댓글/삭제 버튼이 다음 줄로 밀려 내려가던 문제 수정 — 한 줄에 가지런히 표시되도록 카드 폭과 버튼 비율 조정']},
   {version:'v3.11',date:'2026.06.24',items:['이상형 월드컵 목록 카드의 썸네일 영역을 더 크게 키우고, 사진이 잘리지 않고 전체가 보이도록 수정','"시작하기" 버튼 텍스트가 줄바꿈되던 문제 수정 ("시작"으로 축약, 줄바꿈 방지 처리)']},
   {version:'v3.10',date:'2026.06.24',items:['이상형 월드컵 플레이/최종 결과 화면의 팝업 크기를 크게 확대','사진이 정사각형이 아니어도 잘리지 않고 전체가 보이도록 수정 (빈 공간은 배경색으로 채움)']},
   {version:'v3.9',date:'2026.06.24',items:['이상형 월드컵 라인업 등록 화면에서 "설명" 입력칸 제거 — 이름에 바로 설명을 적는 방식으로 통일 (예: "김치찌개를 끓이는 티라노사우르스")','라인업 등록 시 사진 첨부 / 이미지 링크 / 유튜브 링크 중 하나는 다시 필수로 변경 (v3.8에서 선택사항으로 바꿨던 것을 되돌림)']},
