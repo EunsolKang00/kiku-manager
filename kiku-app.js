@@ -2511,19 +2511,19 @@ function renderIdealCupCard(c) {
   const thumbs = (c.lineups||[]).slice(0,2);
   const canManage = isAdmin || (currentUser && c.creatorUid===currentUser.uid);
   return `<div class="hall-card" style="padding:0;overflow:hidden">
-    <div style="display:flex;height:90px">
+    <div style="display:flex;height:160px">
       ${thumbs.map(t=>`<div style="flex:1;background:var(--bg2);overflow:hidden;display:flex;align-items:center;justify-content:center">
-        ${t.imageUrl?`<img src="${t.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:t.youtubeUrl?`<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:20px"></i>`:`<i class="ti ti-photo-off" style="color:var(--text2);font-size:20px"></i>`}
+        ${t.imageUrl?`<img src="${t.imageUrl}" style="width:100%;height:100%;object-fit:contain">`:t.youtubeUrl?`<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:20px"></i>`:`<i class="ti ti-photo-off" style="color:var(--text2);font-size:20px"></i>`}
       </div>`).join('')}
     </div>
     <div style="padding:10px 12px">
       <div style="font-size:13px;font-weight:600;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.title}</div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.description||''}</div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:8px">참가 ${(c.lineups||[]).length}개 · ${c.creatorName||'회원'}</div>
-      <div class="flex" style="gap:6px">
-        <button class="btn btn-sm btn-primary" onclick="openIdealCupPlay('${c.id}')"><i class="ti ti-player-play"></i> 시작하기</button>
-        <button class="btn btn-sm" onclick="openIdealCupRanking('${c.id}')"><i class="ti ti-list"></i> 랭킹</button>
-        <button class="btn btn-sm" onclick="openIdealCupComments('${c.id}')"><i class="ti ti-message-circle"></i> 댓글</button>
+      <div class="flex" style="gap:6px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-primary" style="white-space:nowrap" onclick="openIdealCupPlay('${c.id}')"><i class="ti ti-player-play"></i> 시작</button>
+        <button class="btn btn-sm" style="white-space:nowrap" onclick="openIdealCupRanking('${c.id}')"><i class="ti ti-list"></i> 랭킹</button>
+        <button class="btn btn-sm" style="white-space:nowrap" onclick="openIdealCupComments('${c.id}')"><i class="ti ti-message-circle"></i> 댓글</button>
         ${canManage?`<button class="btn btn-sm btn-danger" onclick="deleteIdealCup('${c.id}')"><i class="ti ti-trash"></i></button>`:''}
       </div>
     </div>
@@ -2838,7 +2838,7 @@ function renderIdealCupPlayMatch() {
         <button class="btn btn-primary" style="width:100%" onclick="chooseIdealCupWinner('b')">선택</button>
       </div>
     </div>
-    <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeIdealCupPlay()">그만하기</button></div>`);
+    <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeIdealCupPlay()">그만하기</button></div>`, 'lg');
 }
 
 function renderIdealCupMedia(entry) {
@@ -2846,7 +2846,7 @@ function renderIdealCupMedia(entry) {
     const vid = getYoutubeId(entry.youtubeUrl);
     return `<div style="width:100%;aspect-ratio:16/9;border-radius:var(--radius);overflow:hidden;background:var(--bg2)"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/${vid}" title="${entry.name}" style="border:none" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>`;
   }
-  return `<div style="width:100%;aspect-ratio:1/1;border-radius:var(--radius);overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${entry.imageUrl?`<img src="${entry.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:'<i class="ti ti-photo" style="color:var(--text2);font-size:24px"></i>'}</div>`;
+  return `<div style="width:100%;aspect-ratio:1/1;border-radius:var(--radius);overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${entry.imageUrl?`<img src="${entry.imageUrl}" style="width:100%;height:100%;object-fit:contain">`:'<i class="ti ti-photo" style="color:var(--text2);font-size:24px"></i>'}</div>`;
 }
 
 window.chooseIdealCupWinner = function(key) {
@@ -2885,7 +2885,7 @@ function finishIdealCupPlay(winner) {
   p.finalWinner = winner;
   openModal(`<div class="modal-title">🏆 최종 우승!</div>
     <div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:16px">
-      <div style="width:160px">${renderIdealCupMedia(winner)}</div>
+      <div style="width:280px;max-width:80%">${renderIdealCupMedia(winner)}</div>
       <div style="font-size:17px;font-weight:700">${winner.name}</div>
       ${winner.desc?`<div style="font-size:12px;color:var(--text2)">${winner.desc}</div>`:''}
     </div>
@@ -2897,7 +2897,7 @@ function finishIdealCupPlay(winner) {
          </div>`
       : `<div style="font-size:12px;color:var(--text2);margin-bottom:14px">로그인하면 결과가 랭킹에 반영되고 코멘트를 남길 수 있어요.</div>
          <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="discardIdealCupResult()">닫기</button></div>`}
-  `);
+  `, 'lg');
 }
 
 window.discardIdealCupResult = function() {
@@ -3050,6 +3050,8 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v3.11',date:'2026.06.24',items:['이상형 월드컵 목록 카드의 썸네일 영역을 더 크게 키우고, 사진이 잘리지 않고 전체가 보이도록 수정','"시작하기" 버튼 텍스트가 줄바꿈되던 문제 수정 ("시작"으로 축약, 줄바꿈 방지 처리)']},
+  {version:'v3.10',date:'2026.06.24',items:['이상형 월드컵 플레이/최종 결과 화면의 팝업 크기를 크게 확대','사진이 정사각형이 아니어도 잘리지 않고 전체가 보이도록 수정 (빈 공간은 배경색으로 채움)']},
   {version:'v3.9',date:'2026.06.24',items:['이상형 월드컵 라인업 등록 화면에서 "설명" 입력칸 제거 — 이름에 바로 설명을 적는 방식으로 통일 (예: "김치찌개를 끓이는 티라노사우르스")','라인업 등록 시 사진 첨부 / 이미지 링크 / 유튜브 링크 중 하나는 다시 필수로 변경 (v3.8에서 선택사항으로 바꿨던 것을 되돌림)']},
   {version:'v3.8',date:'2026.06.24',items:['이상형 월드컵 라인업 등록 시 사진/링크 없이 이름만으로도 등록 가능 (예: "김치찌개를 끓이는 티라노사우르스" 처럼 이름에 직접 설명을 적는 방식)','사진·영상이 없는 라인업은 목록·랭킹·플레이 화면에서 빈 이미지 아이콘으로 표시']},
   {version:'v3.7',date:'2026.06.24',items:['이상형 월드컵 라인업 등록 시 "이미지 링크(URL)" 직접 입력 옵션 추가 — 사진 첨부 / 이미지 링크 / 유튜브 링크 중 하나 선택 가능']},
@@ -3575,7 +3577,11 @@ function updateEditMode(){
   document.querySelectorAll('.edit-only').forEach(el=>el.style.display=isAdmin?'':'none');
 }
 
-function openModal(html){document.getElementById('modal-content').innerHTML=html;document.getElementById('modal-backdrop').classList.add('open');}
+function openModal(html, size){
+  document.getElementById('modal-content').innerHTML = html;
+  document.getElementById('modal-content').classList.toggle('modal-lg', size === 'lg');
+  document.getElementById('modal-backdrop').classList.add('open');
+}
 let _icUnsavedActive = false; // 이상형월드컵 제작/플레이 중 닫기 보호
 window.closeModal = function(){
   if (_icUnsavedActive) {
