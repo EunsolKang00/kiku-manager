@@ -573,6 +573,23 @@ window.addPost = async function() {
 window.openEditPost = function(id) {
   const p = posts.find(x => x.id === id);
   if (!p) return;
+  if (p.type === 'song') {
+    openModal(`<div class="modal-title"><i class="ti ti-music" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>노래 추천 수정</div>
+      <div class="form-row">
+        <div class="form-group"><label>곡명</label><input type="text" id="ep-song" value="${p.songName||''}" placeholder="예: Lemon" autofocus></div>
+        <div class="form-group"><label>아티스트</label><input type="text" id="ep-artist" value="${p.artistName||''}" placeholder="예: 요네즈 켄시"></div>
+      </div>
+      <div class="form-group"><label>유튜브 링크 (선택)</label>
+        <div class="flex" style="gap:6px">
+          <input type="text" id="ep-youtube" value="${p.youtubeUrl||''}" placeholder="https://youtu.be/..." style="flex:1">
+          <button type="button" class="btn btn-sm" onclick="searchYoutubeFor('ep-song','ep-artist')"><i class="ti ti-search"></i> 유튜브에서 찾기</button>
+        </div>
+        <div style="font-size:11px;color:var(--text2);margin-top:4px">⚠️ 유튜브 링크가 없으면 이 곡은 노래 이상형월드컵 후보에 들어갈 수 없어요.</div>
+      </div>
+      <div class="form-group"><label>추천 이유 (선택)</label><textarea id="ep-content" placeholder="이 노래를 추천하는 이유를 적어주세요" style="min-height:100px">${p.content||''}</textarea></div>
+      <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editSongPost('${id}')">저장</button></div>`);
+    return;
+  }
   editPostExistingImages = [...(p.images||[])];
   editPostImageFiles = [];
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>글 수정</div>
@@ -587,6 +604,18 @@ window.openEditPost = function(id) {
     <div id="ep-upload-status" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editPost('${id}')">저장</button></div>`);
   renderEditPostImagePreview();
+};
+
+window.editSongPost = async function(id) {
+  const songName = document.getElementById('ep-song').value.trim();
+  const artistName = document.getElementById('ep-artist').value.trim();
+  const youtubeUrl = document.getElementById('ep-youtube').value.trim();
+  const content = document.getElementById('ep-content').value.trim();
+  if (!songName) { alert('곡명을 입력해주세요.'); return; }
+  if (youtubeUrl && !getYoutubeId(youtubeUrl)) { alert('유튜브 링크 형식이 올바르지 않아요. 링크를 다시 확인해주세요.'); return; }
+  const title = artistName ? `${songName} - ${artistName}` : songName;
+  await updateDoc(doc(db, 'posts', id), {title, songName, artistName, youtubeUrl, content});
+  closeModal();
 };
 
 window.editPost = async function(id) {
@@ -2498,6 +2527,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v3.1.1',date:'2026.06.23',items:['[버그 수정] 노래 추천 게시물 "수정" 클릭 시 일반 게시판 수정 양식(사진첨부 포함)이 뜨던 문제 수정 — 작성할 때와 동일한 곡명/아티스트/유튜브 링크 양식으로 변경']},
   {version:'v3.1',date:'2026.06.23',items:['노래 추천 게시판·플레이리스트에 유튜브 링크 입력 추가, "유튜브에서 찾기" 버튼으로 검색 결과 새 탭 바로 열기','유튜브 링크 없는 곡은 이상형월드컵 후보 목록에서 자동 제외, 입력 화면에 안내 문구 표시','이상형월드컵 투표 화면에서 "들어보기" 버튼으로 곡을 그 자리에서 바로 재생 가능']},
   {version:'v3.0.1',date:'2026.06.23',items:['[버그 수정] 노래 이상형월드컵 "시작" 버튼이 반응 없던 문제 수정 — Firestore가 지원하지 않는 중첩 배열 구조가 원인, 데이터 구조 변경 및 오류 발생 시 알림 표시 추가']},
   {version:'v3.0',date:'2026.06.23',items:['"놀이터" 탭 신설 — 노래 이상형월드컵을 명예의 전당에서 분리해 독립 탭으로 이동','"리포트" 탭을 "통계" 탭에 통합 (월별/분기별 리포트는 통계 화면 하단에서 확인)']},
