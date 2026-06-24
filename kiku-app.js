@@ -2301,12 +2301,14 @@ window.createTournamentConfirm = async function() {
   for (let i=0;i<selected.length;i+=2) {
     round0.push({a:{songName:selected[i].songName,artistName:selected[i].artistName||''}, b:{songName:selected[i+1].songName,artistName:selected[i+1].artistName||''}, votes:{}});
   }
-  await addDoc(collection(db,'tournaments'), {
-    title, candidates: selected.map(s=>({songName:s.songName,artistName:s.artistName||''})),
-    rounds:[round0], currentRound:0, status:'voting', winner:null, createdAt: serverTimestamp()
-  });
-  closeModal();
-  loadTournaments();
+  try {
+    await addDoc(collection(db,'tournaments'), {
+      title, candidates: selected.map(s=>({songName:s.songName,artistName:s.artistName||''})),
+      rounds:[{matches:round0}], currentRound:0, status:'voting', winner:null, createdAt: serverTimestamp()
+    });
+    closeModal();
+    loadTournaments();
+  } catch(e) { alert('토너먼트 생성 중 오류가 발생했습니다: ' + e.message); }
 };
 
 window.openTournamentVote = function(id) {
@@ -2321,7 +2323,7 @@ window.openTournamentVote = function(id) {
 function renderTournamentVoteModal() {
   const t = activeTournamentData;
   if (!t) return;
-  const round = t.rounds[t.currentRound] || [];
+  const round = (t.rounds[t.currentRound] || {}).matches || [];
   const totalRounds = Math.log2(t.candidates.length);
   const remaining = totalRounds - t.currentRound;
   const roundNames = {1:'결승',2:'4강',3:'8강',4:'16강'};
@@ -2357,10 +2359,11 @@ window.castTournamentVote = async function(id, matchIdx, choice) {
   const t = activeTournamentData;
   if (!t || t.id!==id) return;
   const rounds = JSON.parse(JSON.stringify(t.rounds));
-  const match = rounds[t.currentRound][matchIdx];
+  const match = rounds[t.currentRound].matches[matchIdx];
   if (!match.votes) match.votes={};
   match.votes[currentUser.uid] = choice;
-  await updateDoc(doc(db,'tournaments',id), {rounds});
+  try { await updateDoc(doc(db,'tournaments',id), {rounds}); }
+  catch(e) { alert('투표 중 오류가 발생했습니다: ' + e.message); }
 };
 
 window.closeTournamentVoteModal = function() {
@@ -2375,23 +2378,25 @@ window.advanceTournamentRound = async function(id) {
   const tdoc = await getDoc(doc(db,'tournaments',id));
   if (!tdoc.exists()) return;
   const t = {id:tdoc.id, ...tdoc.data()};
-  const round = t.rounds[t.currentRound];
+  const round = t.rounds[t.currentRound].matches;
   const winners = round.map(match=>{
     const votesA = Object.values(match.votes||{}).filter(v=>v==='a').length;
     const votesB = Object.values(match.votes||{}).filter(v=>v==='b').length;
     if (votesA===votesB) return Math.random()<0.5?match.a:match.b;
     return votesA>votesB?match.a:match.b;
   });
-  if (winners.length===1) {
-    await updateDoc(doc(db,'tournaments',id), {status:'done', winner: winners[0]});
-    alert(`🏆 우승곡: ${winners[0].songName}`);
-  } else {
-    const nextRound=[];
-    for (let i=0;i<winners.length;i+=2) nextRound.push({a:winners[i], b:winners[i+1], votes:{}});
-    const rounds=[...t.rounds, nextRound];
-    await updateDoc(doc(db,'tournaments',id), {rounds, currentRound: t.currentRound+1});
-  }
-  loadTournaments();
+  try {
+    if (winners.length===1) {
+      await updateDoc(doc(db,'tournaments',id), {status:'done', winner: winners[0]});
+      alert(`🏆 우승곡: ${winners[0].songName}`);
+    } else {
+      const nextRound=[];
+      for (let i=0;i<winners.length;i+=2) nextRound.push({a:winners[i], b:winners[i+1], votes:{}});
+      const rounds=[...t.rounds, {matches:nextRound}];
+      await updateDoc(doc(db,'tournaments',id), {rounds, currentRound: t.currentRound+1});
+    }
+    loadTournaments();
+  } catch(e) { alert('라운드 진행 중 오류가 발생했습니다: ' + e.message); }
 };
 
 let rollingMessages = [];
@@ -2447,6 +2452,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v3.0.1',date:'2026.06.23',items:['[버그 수정] 노래 이상형월드컵 "시작" 버튼이 반응 없던 문제 수정 — Firestore가 지원하지 않는 중첩 배열 구조가 원인, 데이터 구조 변경 및 오류 발생 시 알림 표시 추가']},
   {version:'v3.0',date:'2026.06.23',items:['"놀이터" 탭 신설 — 노래 이상형월드컵을 명예의 전당에서 분리해 독립 탭으로 이동','"리포트" 탭을 "통계" 탭에 통합 (월별/분기별 리포트는 통계 화면 하단에서 확인)']},
   {version:'v2.9',date:'2026.06.23',items:['노래 이상형월드컵 추가 — 명예의 전당 탭에서 운영진이 추천곡으로 토너먼트 개설, 회원 투표로 라운드 진행, 우승곡은 역대 우승곡 명단에 영구 기록','롤링페이퍼 추가 — 회원 프로필에서 서로에게 메시지 남기기 (익명 가능), 본인/운영진만 삭제 가능']},
   {version:'v2.8',date:'2026.06.23',items:['프로필에 "출석 도장판" 추가 — 전체 벙을 도장 형태로 표시, 참석/불참 한눈에 확인','프로필에 "같이 가장 많이 만난 멤버" TOP3 카드 추가','벙 카드에 "회고" 버튼 추가 — 참석 인원, 첫 참석자, 오랜만에 복귀한 멤버, 단골 멤버 등을 자동 정리해 카카오톡 공유용 텍스트로 생성']},
