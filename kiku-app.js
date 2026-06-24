@@ -573,23 +573,6 @@ window.addPost = async function() {
 window.openEditPost = function(id) {
   const p = posts.find(x => x.id === id);
   if (!p) return;
-  if (p.type === 'song') {
-    openModal(`<div class="modal-title"><i class="ti ti-music" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>노래 추천 수정</div>
-      <div class="form-row">
-        <div class="form-group"><label>곡명</label><input type="text" id="ep-song" value="${p.songName||''}" placeholder="예: Lemon" autofocus></div>
-        <div class="form-group"><label>아티스트</label><input type="text" id="ep-artist" value="${p.artistName||''}" placeholder="예: 요네즈 켄시"></div>
-      </div>
-      <div class="form-group"><label>유튜브 링크 (선택)</label>
-        <div class="flex" style="gap:6px">
-          <input type="text" id="ep-youtube" value="${p.youtubeUrl||''}" placeholder="https://youtu.be/..." style="flex:1">
-          <button type="button" class="btn btn-sm" onclick="searchYoutubeFor('ep-song','ep-artist')"><i class="ti ti-search"></i> 유튜브에서 찾기</button>
-        </div>
-        <div style="font-size:11px;color:var(--text2);margin-top:4px">⚠️ 유튜브 링크가 없으면 이 곡은 노래 이상형월드컵 후보에 들어갈 수 없어요.</div>
-      </div>
-      <div class="form-group"><label>추천 이유 (선택)</label><textarea id="ep-content" placeholder="이 노래를 추천하는 이유를 적어주세요" style="min-height:100px">${p.content||''}</textarea></div>
-      <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editSongPost('${id}')">저장</button></div>`);
-    return;
-  }
   editPostExistingImages = [...(p.images||[])];
   editPostImageFiles = [];
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>글 수정</div>
@@ -604,18 +587,6 @@ window.openEditPost = function(id) {
     <div id="ep-upload-status" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editPost('${id}')">저장</button></div>`);
   renderEditPostImagePreview();
-};
-
-window.editSongPost = async function(id) {
-  const songName = document.getElementById('ep-song').value.trim();
-  const artistName = document.getElementById('ep-artist').value.trim();
-  const youtubeUrl = document.getElementById('ep-youtube').value.trim();
-  const content = document.getElementById('ep-content').value.trim();
-  if (!songName) { alert('곡명을 입력해주세요.'); return; }
-  if (youtubeUrl && !getYoutubeId(youtubeUrl)) { alert('유튜브 링크 형식이 올바르지 않아요. 링크를 다시 확인해주세요.'); return; }
-  const title = artistName ? `${songName} - ${artistName}` : songName;
-  await updateDoc(doc(db, 'posts', id), {title, songName, artistName, youtubeUrl, content});
-  closeModal();
 };
 
 window.editPost = async function(id) {
@@ -2311,10 +2282,33 @@ function renderTournamentsCard() {
 }
 
 
+let playgroundSubTab = 'tournament';
 function renderPlayground() {
   const el = document.getElementById('playground-content');
   if (!el) return;
-  el.innerHTML = `<div class="hall-card"><h3>🎶 노래 이상형월드컵</h3>
+  el.innerHTML = `
+    <div class="flex" style="gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <button class="btn btn-sm board-tab ${playgroundSubTab==='tournament'?'active':''}" data-type="tournament" onclick="switchPlaygroundTab('tournament')"><i class="ti ti-music"></i> 노래 토너먼트</button>
+      <button class="btn btn-sm board-tab ${playgroundSubTab==='idealcup'?'active':''}" data-type="idealcup" onclick="switchPlaygroundTab('idealcup')"><i class="ti ti-trophy"></i> 이상형 월드컵</button>
+    </div>
+    <div id="playground-sub-content"></div>`;
+  renderPlaygroundSubContent();
+}
+
+window.switchPlaygroundTab = function(tab) {
+  playgroundSubTab = tab;
+  document.querySelectorAll('#playground-content .board-tab').forEach(b => b.classList.toggle('active', b.dataset.type === tab));
+  renderPlaygroundSubContent();
+};
+
+function renderPlaygroundSubContent() {
+  const el = document.getElementById('playground-sub-content');
+  if (!el) return;
+  if (playgroundSubTab === 'idealcup') {
+    loadIdealCups();
+    return;
+  }
+  el.innerHTML = `<div class="hall-card"><h3>🎶 노래 토너먼트</h3>
     <div id="tournament-card-content"><div style="font-size:13px;color:var(--text2)">불러오는 중...</div></div>
   </div>`;
   loadTournaments();
@@ -2474,6 +2468,526 @@ window.advanceTournamentRound = async function(id) {
   } catch(e) { alert('라운드 진행 중 오류가 발생했습니다: ' + e.message); }
 };
 
+// ── 이상형 월드컵 ─────────────────────────────────────────────────
+let idealCups = [];
+let icSortMode = 'recent'; // 'popular' | 'recent'
+let _icDraftLineups = [];
+let _icDraftCounter = 0;
+
+async function loadIdealCups() {
+  const el = document.getElementById('playground-sub-content');
+  if (el) el.innerHTML = `<div style="font-size:13px;color:var(--text2)">불러오는 중...</div>`;
+  try {
+    const snap = await getDocs(query(collection(db,'idealCups'), orderBy('createdAt','desc')));
+    idealCups = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  } catch(e) { idealCups = []; }
+  renderIdealCupList();
+}
+
+function renderIdealCupList() {
+  const el = document.getElementById('playground-sub-content');
+  if (!el) return;
+  const sorted = [...idealCups].sort((a,b)=> icSortMode==='popular'
+    ? (b.plays||0)-(a.plays||0)
+    : (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  el.innerHTML = `
+    <div class="flex-between" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div class="flex" style="gap:6px">
+        <button class="btn btn-sm ${icSortMode==='popular'?'btn-primary':''}" onclick="setIcSortMode('popular')">인기순</button>
+        <button class="btn btn-sm ${icSortMode==='recent'?'btn-primary':''}" onclick="setIcSortMode('recent')">최신순</button>
+      </div>
+      <button class="btn btn-sm btn-primary" onclick="openCreateIdealCup()"><i class="ti ti-plus"></i> 월드컵 만들기</button>
+      ${currentUser?`<button class="btn btn-sm" onclick="openIdealCupDraftViewer()"><i class="ti ti-notes"></i> 임시저장 확인</button>`:''}
+    </div>
+    ${sorted.length===0
+      ? `<div class="empty-state"><i class="ti ti-trophy"></i>아직 만들어진 이상형월드컵이 없습니다.</div>`
+      : `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">${sorted.map(c=>renderIdealCupCard(c)).join('')}</div>`}
+  `;
+}
+
+window.setIcSortMode = function(mode) { icSortMode = mode; renderIdealCupList(); };
+
+function renderIdealCupCard(c) {
+  const thumbs = (c.lineups||[]).slice(0,2);
+  const canManage = isAdmin || (currentUser && c.creatorUid===currentUser.uid);
+  return `<div class="hall-card" style="padding:0;overflow:hidden">
+    <div style="display:flex;height:90px">
+      ${thumbs.map(t=>`<div style="flex:1;background:var(--bg2);overflow:hidden;display:flex;align-items:center;justify-content:center">
+        ${t.imageUrl?`<img src="${t.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:`<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:20px"></i>`}
+      </div>`).join('')}
+    </div>
+    <div style="padding:10px 12px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.title}</div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.description||''}</div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:8px">참가 ${(c.lineups||[]).length}개 · ${c.creatorName||'회원'}</div>
+      <div class="flex" style="gap:6px">
+        <button class="btn btn-sm btn-primary" onclick="openIdealCupPlay('${c.id}')"><i class="ti ti-player-play"></i> 시작하기</button>
+        <button class="btn btn-sm" onclick="openIdealCupRanking('${c.id}')"><i class="ti ti-list"></i> 랭킹</button>
+        <button class="btn btn-sm" onclick="openIdealCupComments('${c.id}')"><i class="ti ti-message-circle"></i> 댓글</button>
+        ${canManage?`<button class="btn btn-sm btn-danger" onclick="deleteIdealCup('${c.id}')"><i class="ti ti-trash"></i></button>`:''}
+      </div>
+    </div>
+  </div>`;
+}
+
+window.deleteIdealCup = async function(id) {
+  if (!confirm('이 이상형월드컵을 삭제할까요? 등록된 사진도 함께 삭제됩니다.')) return;
+  try {
+    await deleteDoc(doc(db,'idealCups',id));
+    try {
+      const folderRef = ref(storage, `idealcups/${id}`);
+      const list = await listAll(folderRef);
+      await Promise.all(list.items.map(item=>deleteObject(item)));
+    } catch(e) {}
+    loadIdealCups();
+  } catch(e) { alert('삭제 중 오류가 발생했습니다: ' + e.message); }
+};
+
+function loadIdealCupDraftIntoState(d) {
+  _icDraftLineups = []; _icDraftCounter = 0;
+  (d.lineups||[]).forEach(l=>{
+    _icDraftCounter++;
+    _icDraftLineups.push({ id: l.id || ('L'+_icDraftCounter), name: l.name, desc: l.desc||'', file: null, youtubeUrl: l.youtubeUrl||'', imageUrl: l.imageUrl||'', previewUrl: l.imageUrl||null });
+  });
+}
+
+function openIdealCupCreateModal(draftTitle, draftDesc) {
+  openModal(`<div class="modal-title">🏆 이상형월드컵 만들기</div>
+    <input type="text" id="ic-title" placeholder="제목 (예: J-pop 솔로 가수 이상형월드컵)" value="${(draftTitle||'').replace(/"/g,'&quot;')}" style="width:100%;margin-bottom:8px">
+    <textarea id="ic-desc" placeholder="간단한 설명" style="width:100%;min-height:50px;margin-bottom:14px">${draftDesc||''}</textarea>
+    <div style="font-size:12px;font-weight:600;margin-bottom:6px">라인업 추가 <span id="ic-lineup-count" style="color:var(--text2);font-weight:400">0개</span></div>
+    <div style="border:0.5px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:10px">
+      <input type="text" id="ic-ln-name" placeholder="이름 (예: 유우리)" style="width:100%;margin-bottom:6px">
+      <input type="text" id="ic-ln-desc" placeholder="설명 (선택)" style="width:100%;margin-bottom:6px">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:4px">사진 첨부 또는 유튜브 링크 중 하나만 입력해주세요.</div>
+      <div class="flex" style="gap:6px;margin-bottom:6px">
+        <input type="file" id="ic-ln-file" accept="image/*" style="flex:1;font-size:12px">
+        <input type="text" id="ic-ln-yt" placeholder="유튜브 링크" style="flex:1">
+      </div>
+      <button class="btn btn-sm" onclick="addIdealCupLineupDraft()"><i class="ti ti-plus"></i> 라인업에 추가</button>
+    </div>
+    <div id="ic-lineup-list" style="max-height:200px;overflow-y:auto;border:0.5px solid var(--border);border-radius:var(--radius);padding:6px;margin-bottom:14px">
+      <div style="font-size:12px;color:var(--text2)">아직 추가된 라인업이 없습니다.</div>
+    </div>
+    <div class="flex" style="justify-content:flex-end;gap:8px">
+      <button class="btn" onclick="closeModal()">취소</button>
+      <button class="btn" id="ic-draft-btn" onclick="saveIdealCupDraft()"><i class="ti ti-device-floppy"></i> 임시저장</button>
+      <button class="btn btn-primary" id="ic-submit-btn" onclick="submitIdealCup()">만들기</button>
+    </div>`);
+  renderIdealCupDraftList();
+}
+
+window.openCreateIdealCup = async function() {
+  if (!currentUser) { requireLogin('이상형월드컵을 만들려면 로그인이 필요합니다.'); return; }
+  _icDraftLineups = []; _icDraftCounter = 0;
+  let draftTitle = '', draftDesc = '';
+  try {
+    const dsnap = await getDoc(doc(db,'idealCupDrafts',currentUser.uid));
+    if (dsnap.exists() && confirm('작성 중이던 임시저장본이 있습니다. 불러올까요? ("취소"를 누르면 새로 시작합니다)')) {
+      const d = dsnap.data();
+      draftTitle = d.title || ''; draftDesc = d.description || '';
+      loadIdealCupDraftIntoState(d);
+    }
+  } catch(e) {}
+  openIdealCupCreateModal(draftTitle, draftDesc);
+};
+
+window.openIdealCupDraftViewer = async function() {
+  if (!currentUser) { requireLogin('임시저장 확인에는 로그인이 필요합니다.'); return; }
+  openModal(`<div class="modal-title">📝 임시저장</div><div style="font-size:13px;color:var(--text2)">불러오는 중...</div>`);
+  let dsnap;
+  try { dsnap = await getDoc(doc(db,'idealCupDrafts',currentUser.uid)); }
+  catch(e) { closeModal(); alert('임시저장을 불러오지 못했습니다: ' + e.message); return; }
+  if (!dsnap.exists()) {
+    openModal(`<div class="modal-title">📝 임시저장</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:14px">저장된 임시저장본이 없습니다.</div>
+      <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeModal()">닫기</button></div>`);
+    return;
+  }
+  const d = dsnap.data();
+  const lineups = d.lineups || [];
+  const updated = d.updatedAt ? new Date(d.updatedAt.seconds*1000) : null;
+  openModal(`<div class="modal-title">📝 임시저장</div>
+    <div style="font-size:14px;font-weight:600;margin-bottom:4px">${d.title || '(제목 없음)'}</div>
+    ${d.description?`<div style="font-size:12px;color:var(--text2);margin-bottom:8px">${d.description}</div>`:''}
+    <div style="font-size:11px;color:var(--text2);margin-bottom:12px">라인업 ${lineups.length}개${updated?' · '+formatDate(updated)+' 저장':''}</div>
+    <div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px">
+      ${lineups.map(l=>`<div style="flex-shrink:0;width:48px;height:48px;border-radius:6px;overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${l.imageUrl?`<img src="${l.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:'<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:14px"></i>'}</div>`).join('')}
+    </div>
+    <div class="flex" style="justify-content:flex-end;gap:8px">
+      <button class="btn btn-danger" onclick="deleteIdealCupDraft()">삭제</button>
+      <button class="btn" onclick="closeModal()">닫기</button>
+      <button class="btn btn-primary" onclick="resumeIdealCupDraft()">이어서 작성</button>
+    </div>`);
+};
+
+window.resumeIdealCupDraft = async function() {
+  if (!currentUser) return;
+  let dsnap;
+  try { dsnap = await getDoc(doc(db,'idealCupDrafts',currentUser.uid)); }
+  catch(e) { alert('임시저장을 불러오지 못했습니다: ' + e.message); return; }
+  if (!dsnap.exists()) { closeModal(); return; }
+  const d = dsnap.data();
+  loadIdealCupDraftIntoState(d);
+  openIdealCupCreateModal(d.title||'', d.description||'');
+};
+
+window.deleteIdealCupDraft = async function() {
+  if (!currentUser) return;
+  if (!confirm('임시저장본을 삭제할까요?')) return;
+  try {
+    await deleteDoc(doc(db,'idealCupDrafts',currentUser.uid));
+    closeModal();
+  } catch(e) { alert('삭제 중 오류가 발생했습니다: ' + e.message); }
+};
+
+window.addIdealCupLineupDraft = function() {
+  const name = document.getElementById('ic-ln-name').value.trim();
+  if (!name) { alert('라인업 이름을 입력해주세요.'); return; }
+  const desc = document.getElementById('ic-ln-desc').value.trim();
+  const fileInput = document.getElementById('ic-ln-file');
+  const file = fileInput.files[0] || null;
+  const ytRaw = document.getElementById('ic-ln-yt').value.trim();
+  if (file && ytRaw) { alert('사진과 유튜브 링크 중 하나만 입력해주세요.'); return; }
+  let youtubeUrl = '';
+  if (ytRaw) {
+    if (!getYoutubeId(ytRaw)) { alert('유효한 유튜브 링크가 아닙니다.'); return; }
+    youtubeUrl = ytRaw;
+  }
+  if (!file && !youtubeUrl) { alert('사진을 첨부하거나 유튜브 링크를 입력해주세요.'); return; }
+  const id = 'L' + (++_icDraftCounter);
+  const previewUrl = file ? URL.createObjectURL(file) : null;
+  _icDraftLineups.push({ id, name, desc, file, youtubeUrl, previewUrl });
+  document.getElementById('ic-ln-name').value = '';
+  document.getElementById('ic-ln-desc').value = '';
+  fileInput.value = '';
+  document.getElementById('ic-ln-yt').value = '';
+  renderIdealCupDraftList();
+};
+
+function renderIdealCupDraftList() {
+  const el = document.getElementById('ic-lineup-list');
+  if (!el) return;
+  el.innerHTML = _icDraftLineups.length === 0
+    ? `<div style="font-size:12px;color:var(--text2)">아직 추가된 라인업이 없습니다.</div>`
+    : _icDraftLineups.map((l,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px;border-bottom:0.5px solid var(--border)">
+        ${l.previewUrl
+          ? `<img src="${l.previewUrl}" style="width:36px;height:36px;border-radius:6px;object-fit:cover">`
+          : `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);display:flex;align-items:center;justify-content:center"><i class="ti ti-brand-youtube" style="font-size:16px;color:var(--text2)"></i></div>`}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:500">${l.name}</div>
+          ${l.desc?`<div style="font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.desc}</div>`:''}
+        </div>
+        <span style="cursor:pointer;color:var(--text2);padding:0 4px" onclick="removeIdealCupLineupDraft(${i})">×</span>
+      </div>`).join('');
+  const countEl = document.getElementById('ic-lineup-count');
+  if (countEl) countEl.textContent = `${_icDraftLineups.length}개`;
+}
+
+window.removeIdealCupLineupDraft = function(i) {
+  _icDraftLineups.splice(i, 1);
+  renderIdealCupDraftList();
+};
+
+window.submitIdealCup = async function() {
+  const title = document.getElementById('ic-title').value.trim();
+  const description = document.getElementById('ic-desc').value.trim();
+  if (!title) { alert('제목을 입력해주세요.'); return; }
+  if (_icDraftLineups.length < 2) { alert('라인업은 2개 이상 등록해야 합니다.'); return; }
+  const btn = document.getElementById('ic-submit-btn');
+  btn.disabled = true;
+  try {
+    const cupRef = doc(collection(db,'idealCups'));
+    const lineups = [];
+    for (let i=0; i<_icDraftLineups.length; i++) {
+      const l = _icDraftLineups[i];
+      let imageUrl = l.imageUrl || '';
+      if (l.file) {
+        btn.textContent = `업로드 중... (${i+1}/${_icDraftLineups.length})`;
+        const storageRef = ref(storage, `idealcups/${cupRef.id}/${l.id}_${Date.now()}`);
+        await uploadBytes(storageRef, l.file);
+        imageUrl = await getDownloadURL(storageRef);
+      }
+      lineups.push({ id:l.id, name:l.name, desc:l.desc, imageUrl, youtubeUrl:l.youtubeUrl||'', wins:0, matches:0, championCount:0 });
+    }
+    await setDoc(cupRef, {
+      title, description, lineups,
+      creatorUid: currentUser.uid, creatorName: authorDisplayName(),
+      createdAt: serverTimestamp(), plays: 0
+    });
+    _icDraftLineups = [];
+    try { await deleteDoc(doc(db,'idealCupDrafts',currentUser.uid)); } catch(e) {}
+    closeModal();
+    loadIdealCups();
+  } catch(e) {
+    alert('이상형월드컵 생성 중 오류가 발생했습니다: ' + e.message);
+    btn.disabled = false; btn.textContent = '만들기';
+  }
+};
+
+window.saveIdealCupDraft = async function() {
+  if (!currentUser) { requireLogin('임시저장에는 로그인이 필요합니다.'); return; }
+  const title = document.getElementById('ic-title').value.trim();
+  const description = document.getElementById('ic-desc').value.trim();
+  const btn = document.getElementById('ic-draft-btn');
+  btn.disabled = true; btn.textContent = '저장 중...';
+  try {
+    for (let i=0; i<_icDraftLineups.length; i++) {
+      const l = _icDraftLineups[i];
+      if (l.file && !l.imageUrl) {
+        btn.textContent = `사진 업로드 중... (${i+1}/${_icDraftLineups.length})`;
+        const storageRef = ref(storage, `idealcups_drafts/${currentUser.uid}/${l.id}_${Date.now()}`);
+        await uploadBytes(storageRef, l.file);
+        l.imageUrl = await getDownloadURL(storageRef);
+        l.file = null;
+      }
+    }
+    const lineups = _icDraftLineups.map(l => ({ id:l.id, name:l.name, desc:l.desc, imageUrl:l.imageUrl||'', youtubeUrl:l.youtubeUrl||'' }));
+    await setDoc(doc(db,'idealCupDrafts',currentUser.uid), { title, description, lineups, updatedAt: serverTimestamp() });
+    alert('임시저장 되었습니다. 다음에 "월드컵 만들기"를 누르면 이어서 작성할 수 있어요.');
+  } catch(e) {
+    alert('임시저장 중 오류가 발생했습니다: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '임시저장';
+  }
+};
+
+// ── 이상형 월드컵 · 플레이 ───────────────────────────────────────────
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i=a.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+  return a;
+}
+
+function idealCupRoundLabel(matchCount) {
+  const map = {1:'결승',2:'4강',4:'8강',8:'16강',16:'32강',32:'64강',64:'128강'};
+  return map[matchCount] || `${matchCount*2}강`;
+}
+
+// 라인업 수가 2의 거듭수가 아니어도 대진표를 짤 수 있도록 부전승을 자동 배정
+function buildBracketRound0(entries, size) {
+  const byesCount = size - entries.length;
+  const realRealCount = entries.length - size/2;
+  const shuffled = shuffleArray(entries);
+  const matches = [];
+  let idx = 0;
+  for (let i=0;i<realRealCount;i++) { matches.push({a:shuffled[idx], b:shuffled[idx+1], bye:false}); idx+=2; }
+  for (let i=0;i<byesCount;i++) { matches.push({a:shuffled[idx], b:null, bye:true}); idx+=1; }
+  return shuffleArray(matches);
+}
+
+let _icPlay = null;
+
+window.openIdealCupPlay = function(cupId) {
+  const cup = idealCups.find(c=>c.id===cupId);
+  if (!cup) return;
+  const total = (cup.lineups||[]).length;
+  if (total < 2) { alert('라인업이 부족합니다.'); return; }
+  let sizes = []; let p = 2;
+  while (p < total) { sizes.push(p); p *= 2; }
+  sizes.push(p);
+  openModal(`<div class="modal-title">🏆 ${cup.title} 시작하기</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:10px">몇 강으로 진행할까요? (등록된 라인업 ${total}개)</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      ${sizes.map(s=>`<button class="btn" onclick="startIdealCupBracket('${cupId}',${s})">${s===2?'결승(2강)':`${s}강`}</button>`).join('')}
+    </div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:10px">${total}개 라인업이 선택한 강수에 정확히 맞지 않으면, 일부는 부전승으로 자동 진출합니다.</div>
+    <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeModal()">취소</button></div>`);
+};
+
+window.startIdealCupBracket = function(cupId, size) {
+  const cup = idealCups.find(c=>c.id===cupId);
+  if (!cup) return;
+  const total = cup.lineups.length;
+  const entries = size < total ? shuffleArray(cup.lineups).slice(0, size) : [...cup.lineups];
+  const matches0 = buildBracketRound0(entries, size);
+  _icPlay = { cupId, cupTitle: cup.title, roundMatches: matches0, matchIdx: 0, roundWinners: [], history: [], finalWinner: null };
+  renderIdealCupPlayMatch();
+};
+
+function renderIdealCupPlayMatch() {
+  const p = _icPlay;
+  if (!p) return;
+  const match = p.roundMatches[p.matchIdx];
+  if (!match) return;
+  if (match.bye) { advanceIdealCupLocal(match.a, null, true); return; }
+  const roundLabel = idealCupRoundLabel(p.roundMatches.length);
+  openModal(`<div class="modal-title">🏆 ${p.cupTitle} · ${roundLabel}</div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:10px">${p.matchIdx+1}/${p.roundMatches.length}경기</div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;align-items:stretch">
+      <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+        ${renderIdealCupMedia(match.a)}
+        <div style="font-size:14px;font-weight:600;text-align:center">${match.a.name}</div>
+        ${match.a.desc?`<div style="font-size:11px;color:var(--text2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${match.a.desc}</div>`:''}
+        <button class="btn btn-primary" style="width:100%" onclick="chooseIdealCupWinner('a')">선택</button>
+      </div>
+      <div style="display:flex;align-items:center;font-size:12px;color:var(--text2);font-weight:600">VS</div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+        ${renderIdealCupMedia(match.b)}
+        <div style="font-size:14px;font-weight:600;text-align:center">${match.b.name}</div>
+        ${match.b.desc?`<div style="font-size:11px;color:var(--text2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${match.b.desc}</div>`:''}
+        <button class="btn btn-primary" style="width:100%" onclick="chooseIdealCupWinner('b')">선택</button>
+      </div>
+    </div>
+    <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeIdealCupPlay()">그만하기</button></div>`);
+}
+
+function renderIdealCupMedia(entry) {
+  if (entry.youtubeUrl) {
+    const vid = getYoutubeId(entry.youtubeUrl);
+    return `<div style="width:100%;aspect-ratio:16/9;border-radius:var(--radius);overflow:hidden;background:var(--bg2)"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/${vid}" title="${entry.name}" style="border:none" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>`;
+  }
+  return `<div style="width:100%;aspect-ratio:1/1;border-radius:var(--radius);overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${entry.imageUrl?`<img src="${entry.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:'<i class="ti ti-photo" style="color:var(--text2);font-size:24px"></i>'}</div>`;
+}
+
+window.chooseIdealCupWinner = function(key) {
+  const p = _icPlay;
+  if (!p) return;
+  const match = p.roundMatches[p.matchIdx];
+  const winner = match[key];
+  const loser = match[key==='a'?'b':'a'];
+  advanceIdealCupLocal(winner, loser, false);
+};
+
+function advanceIdealCupLocal(winner, loser, isBye) {
+  const p = _icPlay;
+  if (!p) return;
+  if (!isBye) p.history.push({ aId: winner.id, bId: loser.id, winnerId: winner.id });
+  p.roundWinners.push(winner);
+  p.matchIdx++;
+  if (p.matchIdx >= p.roundMatches.length) {
+    if (p.roundWinners.length === 1) { finishIdealCupPlay(p.roundWinners[0]); return; }
+    const nextMatches = [];
+    for (let i=0;i<p.roundWinners.length;i+=2) nextMatches.push({ a:p.roundWinners[i], b:p.roundWinners[i+1], bye:false });
+    p.roundMatches = nextMatches;
+    p.matchIdx = 0;
+    p.roundWinners = [];
+  }
+  renderIdealCupPlayMatch();
+}
+
+window.closeIdealCupPlay = function() {
+  if (!confirm('진행 중인 월드컵을 그만할까요? 결과는 저장되지 않습니다.')) return;
+  _icPlay = null;
+  closeModal();
+};
+
+function finishIdealCupPlay(winner) {
+  const p = _icPlay;
+  if (!p) return;
+  p.finalWinner = winner;
+  openModal(`<div class="modal-title">🏆 최종 우승!</div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:16px">
+      <div style="width:160px">${renderIdealCupMedia(winner)}</div>
+      <div style="font-size:17px;font-weight:700">${winner.name}</div>
+      ${winner.desc?`<div style="font-size:12px;color:var(--text2)">${winner.desc}</div>`:''}
+    </div>
+    ${currentUser
+      ? `<textarea id="ic-result-comment" placeholder="한 줄 코멘트를 남겨보세요 (선택)" style="width:100%;min-height:50px;margin-bottom:14px"></textarea>
+         <div class="flex" style="justify-content:flex-end;gap:8px">
+           <button class="btn" onclick="discardIdealCupResult()">닫기</button>
+           <button class="btn btn-primary" id="ic-result-submit" onclick="submitIdealCupResult('${winner.id}')">결과 저장</button>
+         </div>`
+      : `<div style="font-size:12px;color:var(--text2);margin-bottom:14px">로그인하면 결과가 랭킹에 반영되고 코멘트를 남길 수 있어요.</div>
+         <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="discardIdealCupResult()">닫기</button></div>`}
+  `);
+}
+
+window.discardIdealCupResult = function() {
+  _icPlay = null;
+  closeModal();
+};
+
+window.submitIdealCupResult = async function(winnerId) {
+  const p = _icPlay;
+  if (!p) return;
+  if (!currentUser) { requireLogin('결과 저장에는 로그인이 필요합니다.'); return; }
+  const comment = document.getElementById('ic-result-comment').value.trim();
+  const btn = document.getElementById('ic-result-submit');
+  btn.disabled = true; btn.textContent = '저장 중...';
+  try {
+    const cupRef = doc(db,'idealCups',p.cupId);
+    const snap = await getDoc(cupRef);
+    if (snap.exists()) {
+      const cupData = snap.data();
+      const lineups = (cupData.lineups||[]).map(l=>({...l}));
+      p.history.forEach(h=>{
+        const a = lineups.find(l=>l.id===h.aId); if (a) a.matches = (a.matches||0)+1;
+        const b = lineups.find(l=>l.id===h.bId); if (b) b.matches = (b.matches||0)+1;
+        const w = lineups.find(l=>l.id===h.winnerId); if (w) w.wins = (w.wins||0)+1;
+      });
+      const champ = lineups.find(l=>l.id===winnerId);
+      if (champ) champ.championCount = (champ.championCount||0)+1;
+      await updateDoc(cupRef, { lineups, plays: (cupData.plays||0)+1 });
+    }
+    if (comment) {
+      await addDoc(collection(db,'idealCupComments'), {
+        cupId: p.cupId, winnerLineupId: winnerId, winnerName: p.finalWinner?.name||'',
+        comment, authorUid: currentUser.uid, authorName: authorDisplayName(), createdAt: serverTimestamp()
+      });
+    }
+    _icPlay = null;
+    closeModal();
+    loadIdealCups();
+  } catch(e) {
+    alert('결과 저장 중 오류가 발생했습니다: ' + e.message);
+    btn.disabled = false; btn.textContent = '결과 저장';
+  }
+};
+
+window.openIdealCupRanking = async function(cupId) {
+  openModal(`<div class="modal-title">📊 랭킹</div><div style="font-size:13px;color:var(--text2)">불러오는 중...</div>`);
+  let cup;
+  try {
+    const snap = await getDoc(doc(db,'idealCups',cupId));
+    if (!snap.exists()) { closeModal(); return; }
+    cup = { id:snap.id, ...snap.data() };
+  } catch(e) { closeModal(); alert('랭킹을 불러오지 못했습니다: ' + e.message); return; }
+  const lineups = [...(cup.lineups||[])].sort((a,b)=>
+    (b.championCount||0)-(a.championCount||0) || ((b.matches?(b.wins||0)/b.matches:0) - (a.matches?(a.wins||0)/a.matches:0)));
+  openModal(`<div class="modal-title">📊 ${cup.title} · 랭킹</div>
+    <div style="max-height:50vh;overflow-y:auto;margin-bottom:10px">
+    ${lineups.length===0 ? `<div style="font-size:13px;color:var(--text2)">아직 플레이 기록이 없습니다.</div>` :
+    lineups.map((l,i)=>{
+      const rate = l.matches ? Math.round((l.wins||0)/l.matches*100) : 0;
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:0.5px solid var(--border)">
+        <div style="width:22px;text-align:center;font-weight:700;color:var(--text2)">${i+1}</div>
+        <div style="width:36px;height:36px;border-radius:6px;overflow:hidden;background:var(--bg2);flex-shrink:0;display:flex;align-items:center;justify-content:center">${l.imageUrl?`<img src="${l.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:'<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:14px"></i>'}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.name}</div>
+          <div style="font-size:11px;color:var(--text2)">우승 ${l.championCount||0}회 · 매치 승률 ${rate}% (${l.wins||0}/${l.matches||0})</div>
+        </div>
+      </div>`;
+    }).join('')}
+    </div>
+    <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeModal()">닫기</button></div>`);
+};
+
+window.openIdealCupComments = async function(cupId) {
+  openModal(`<div class="modal-title">💬 댓글</div><div style="font-size:13px;color:var(--text2)">불러오는 중...</div>`);
+  let comments = [];
+  try {
+    const snap = await getDocs(collection(db,'idealCupComments'));
+    comments = snap.docs.map(d=>({id:d.id,...d.data()}))
+      .filter(c=>c.cupId===cupId)
+      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  } catch(e) {}
+  const cup = idealCups.find(c=>c.id===cupId);
+  openModal(`<div class="modal-title">💬 ${cup?cup.title:''} · 댓글</div>
+    <div style="max-height:50vh;overflow-y:auto;margin-bottom:10px">
+    ${comments.length===0 ? `<div style="font-size:13px;color:var(--text2)">아직 댓글이 없습니다.</div>` :
+    comments.map(c=>{
+      const date = c.createdAt ? new Date(c.createdAt.seconds*1000) : null;
+      return `<div style="padding:8px 4px;border-bottom:0.5px solid var(--border)">
+        <div style="font-size:12px;color:var(--text2);margin-bottom:2px">🏆 ${c.winnerName||'-'}</div>
+        <div style="font-size:13px;margin-bottom:4px;white-space:pre-line">${c.comment}</div>
+        <div style="font-size:11px;color:var(--text2)">${c.authorName||'회원'}${date?' · '+formatDate(date):''}</div>
+      </div>`;
+    }).join('')}
+    </div>
+    <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeModal()">닫기</button></div>`);
+};
+
 let rollingMessages = [];
 async function loadRollingMessages(memberId) {
   try {
@@ -2527,7 +3041,10 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
-  {version:'v3.1.1',date:'2026.06.23',items:['[버그 수정] 노래 추천 게시물 "수정" 클릭 시 일반 게시판 수정 양식(사진첨부 포함)이 뜨던 문제 수정 — 작성할 때와 동일한 곡명/아티스트/유튜브 링크 양식으로 변경']},
+  {version:'v3.5',date:'2026.06.24',items:['이상형 월드컵 목록 화면에 "임시저장 확인" 버튼 추가 — 제목/설명/라인업 개수와 썸네일을 미리 보고 "이어서 작성" 또는 "삭제" 선택 가능']},
+  {version:'v3.4',date:'2026.06.24',items:['이상형 월드컵 카드에 "댓글" 버튼 추가 — 플레이 후 남겨진 우승 코멘트를 모아서 최신순으로 확인 가능','이상형 월드컵 제작 중 "임시저장" 기능 추가 — 계정별로 1개씩 저장되며, 다음에 "월드컵 만들기"를 눌렀을 때 이어서 작성할지 선택할 수 있음 (사진도 임시저장 시점에 미리 업로드되어 유지됨)','월드컵 만들기 완료 시 임시저장본은 자동으로 삭제됨']},
+  {version:'v3.3',date:'2026.06.24',items:['이상형 월드컵 플레이 기능 추가 — 강수 선택 후 랜덤 대진표 생성, 1대1로 클릭하며 진출하는 방식','라인업 개수가 선택한 강수에 딱 맞지 않으면 부전승을 자동 배정해 대진표를 맞춤','사진 라인업과 유튜브 영상 라인업 모두 동일하게 "선택" 버튼으로 통일 (영상은 큰 화면으로 그 자리에서 바로 재생)','최종 우승 결정 시 우승자를 사진과 함께 보여주고, 로그인 회원은 한줄 코멘트 작성 가능','랭킹 화면 추가 — 라인업별 최종 우승 횟수와 매치 승률을 함께 표시']},
+  {version:'v3.2',date:'2026.06.24',items:['놀이터 탭에 하위 탭 구조 추가 — "노래 토너먼트"(기존 이상형월드컵, 명칭 변경)와 "이상형 월드컵"(신규) 분리','이상형 월드컵 신설 — 회원 누구나 주제/설명/라인업(사진 또는 유튜브 링크)을 등록해 직접 만들 수 있음, 라인업 개수 제한 없음','이상형 월드컵 목록에 인기순/최신순 정렬 및 카드형 리스트(썸네일/제목/설명/참가 인원수) 추가, 삭제는 제작자 본인 또는 운영진만 가능','(플레이/랭킹 기능은 다음 업데이트에서 제공)']},
   {version:'v3.1',date:'2026.06.23',items:['노래 추천 게시판·플레이리스트에 유튜브 링크 입력 추가, "유튜브에서 찾기" 버튼으로 검색 결과 새 탭 바로 열기','유튜브 링크 없는 곡은 이상형월드컵 후보 목록에서 자동 제외, 입력 화면에 안내 문구 표시','이상형월드컵 투표 화면에서 "들어보기" 버튼으로 곡을 그 자리에서 바로 재생 가능']},
   {version:'v3.0.1',date:'2026.06.23',items:['[버그 수정] 노래 이상형월드컵 "시작" 버튼이 반응 없던 문제 수정 — Firestore가 지원하지 않는 중첩 배열 구조가 원인, 데이터 구조 변경 및 오류 발생 시 알림 표시 추가']},
   {version:'v3.0',date:'2026.06.23',items:['"놀이터" 탭 신설 — 노래 이상형월드컵을 명예의 전당에서 분리해 독립 탭으로 이동','"리포트" 탭을 "통계" 탭에 통합 (월별/분기별 리포트는 통계 화면 하단에서 확인)']},
