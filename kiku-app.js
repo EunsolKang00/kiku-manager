@@ -1994,9 +1994,6 @@ function renderHall() {
         <div style="font-size:12px;color:var(--text2)">${m.count}/${m.total}회</div>
       </div>`).join('')}</div></div>`:''}
   ${renderSeasonAwardsCard()}
-  <div class="hall-card"><h3>🎶 노래 이상형월드컵</h3>
-    <div id="tournament-card-content"><div style="font-size:13px;color:var(--text2)">불러오는 중...</div></div>
-  </div>
   <div class="hall-card"><h3>🏅 개인 업적 현황</h3>
     ${members.length===0?'<div style="font-size:13px;color:var(--text2)">회원 데이터가 없습니다.</div>':
     '<div style="display:flex;flex-direction:column;gap:4px">'+
@@ -2007,7 +2004,6 @@ function renderHall() {
         <div style="font-size:11px;color:var(--text2)">${unlocked.length}/${achvs.length}</div></div>`;
     }).join('')+'</div>'}
   </div>`;
-  loadTournaments();
 }
 
 function renderCalendar() {
@@ -2253,6 +2249,15 @@ function renderTournamentsCard() {
 }
 
 
+function renderPlayground() {
+  const el = document.getElementById('playground-content');
+  if (!el) return;
+  el.innerHTML = `<div class="hall-card"><h3>🎶 노래 이상형월드컵</h3>
+    <div id="tournament-card-content"><div style="font-size:13px;color:var(--text2)">불러오는 중...</div></div>
+  </div>`;
+  loadTournaments();
+}
+
 function getUniqueSongPool() {
   const pool = getSongPool();
   const seen = new Set();
@@ -2442,6 +2447,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v3.0',date:'2026.06.23',items:['"놀이터" 탭 신설 — 노래 이상형월드컵을 명예의 전당에서 분리해 독립 탭으로 이동','"리포트" 탭을 "통계" 탭에 통합 (월별/분기별 리포트는 통계 화면 하단에서 확인)']},
   {version:'v2.9',date:'2026.06.23',items:['노래 이상형월드컵 추가 — 명예의 전당 탭에서 운영진이 추천곡으로 토너먼트 개설, 회원 투표로 라운드 진행, 우승곡은 역대 우승곡 명단에 영구 기록','롤링페이퍼 추가 — 회원 프로필에서 서로에게 메시지 남기기 (익명 가능), 본인/운영진만 삭제 가능']},
   {version:'v2.8',date:'2026.06.23',items:['프로필에 "출석 도장판" 추가 — 전체 벙을 도장 형태로 표시, 참석/불참 한눈에 확인','프로필에 "같이 가장 많이 만난 멤버" TOP3 카드 추가','벙 카드에 "회고" 버튼 추가 — 참석 인원, 첫 참석자, 오랜만에 복귀한 멤버, 단골 멤버 등을 자동 정리해 카카오톡 공유용 텍스트로 생성']},
   {version:'v2.7',date:'2026.06.23',items:['[버그 수정] 정산 계산기에서 금액 입력 시 한 글자만 쳐도 커서가 사라지던 문제 수정']},
@@ -2470,7 +2476,7 @@ function renderUpdates() {
 // ── 공통 UI ───────────────────────────────────────────────────────
 window.switchTab = function(tab) {
   document.querySelectorAll('.nav-item').forEach((t,i)=>t.classList.toggle('active',
-    ['dashboard','notice','board','settlement','members','bung','ghost','stats','report','hall','calendar','profile','gallery','updates'][i]===tab));
+    ['dashboard','notice','board','settlement','members','bung','ghost','stats','hall','playground','calendar','profile','gallery','updates'][i]===tab));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+tab).classList.add('active');
   if(tab==='gallery') loadGallery();
@@ -2478,6 +2484,7 @@ window.switchTab = function(tab) {
   if(tab==='profile') renderProfileList();
   if(tab==='board') renderBoardList();
   if(tab==='settlement') renderSettlementList();
+  if(tab==='playground') renderPlayground();
 };
 
 window.filterMembers = function(q) {
