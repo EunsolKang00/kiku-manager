@@ -2506,7 +2506,7 @@ function renderIdealCupList() {
     </div>
     ${sorted.length===0
       ? `<div class="empty-state"><i class="ti ti-trophy"></i>아직 만들어진 이상형월드컵이 없습니다.</div>`
-      : `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">${sorted.map(c=>renderIdealCupCard(c)).join('')}</div>`}
+      : `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px">${sorted.map(c=>renderIdealCupCard(c)).join('')}</div>`}
   `;
 }
 
@@ -2525,11 +2525,11 @@ function renderIdealCupCard(c) {
       <div style="font-size:13px;font-weight:600;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.title}</div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.description||''}</div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:8px">참가 ${(c.lineups||[]).length}개 · ${c.creatorName||'회원'}</div>
-      <div class="flex" style="gap:6px;flex-wrap:wrap">
+      <div class="flex" style="gap:6px;flex-wrap:nowrap">
         <button class="btn btn-sm btn-primary" style="white-space:nowrap" onclick="openIdealCupPlay('${c.id}')"><i class="ti ti-player-play"></i> 시작</button>
         <button class="btn btn-sm" style="white-space:nowrap" onclick="openIdealCupRanking('${c.id}')"><i class="ti ti-list"></i> 랭킹</button>
         <button class="btn btn-sm" style="white-space:nowrap" onclick="openIdealCupComments('${c.id}')"><i class="ti ti-message-circle"></i> 댓글</button>
-        ${canManage?`<button class="btn btn-sm btn-danger" onclick="deleteIdealCup('${c.id}')"><i class="ti ti-trash"></i></button>`:''}
+        ${canManage?`<button class="btn btn-sm btn-danger" style="flex:0 0 auto" onclick="deleteIdealCup('${c.id}')"><i class="ti ti-trash"></i></button>`:''}
       </div>
     </div>
   </div>`;
@@ -3055,6 +3055,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v3.14',date:'2026.06.24',items:['[버그 수정] 이상형월드컵 카드의 버튼(시작/랭킹/댓글/삭제)이 폭이 좁을 때 삭제 아이콘만 다음 줄로 내려가던 문제 수정 — 카드 최소 폭을 220px → 270px로 늘려 버튼 4개가 한 줄에 여유있게 들어가도록 조정']},
   {version:'v3.13',date:'2026.06.24',items:['[버그 수정] 노래 토너먼트 투표 화면에서 \"들어보기\"를 여러 곡 연속으로 누르면 모든 곡이 동시에 재생되던 문제 수정 — 새 곡을 재생하면 이전에 재생 중이던 곡은 자동으로 정지']},
   {version:'v3.12',date:'2026.06.24',items:['놀이터 탭 진입 시 \"이상형 월드컵\"이 먼저 보이도록 하위 탭 순서 변경']},
   {version:'v3.11',date:'2026.06.24',items:['이상형 월드컵 목록 카드의 썸네일 영역을 더 크게 키우고, 사진이 잘리지 않고 전체가 보이도록 수정','"시작하기" 버튼 텍스트가 줄바꿈되던 문제 수정 ("시작"으로 축약, 줄바꿈 방지 처리)']},
