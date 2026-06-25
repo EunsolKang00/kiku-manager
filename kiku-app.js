@@ -230,11 +230,11 @@ function renderNotices() {
     const tagLabel = n.pinned ? '📌 고정' : n.important ? '❗ 중요' : '📢 공지';
     return `<div class="notice-card ${n.pinned ? 'notice-pinned' : ''}" onclick="openNoticeDetail('${n.id}')">
       <div class="flex-between mb-1">
-        <div class="flex">
-          <span class="notice-tag ${tagClass}">${tagLabel}</span>
+        <div class="flex" style="min-width:0;flex:1">
+          <span class="notice-tag ${tagClass}" style="flex-shrink:0">${tagLabel}</span>
           <strong style="font-size:14px">${n.title}</strong>
         </div>
-        <div class="flex" style="gap:4px">
+        <div class="flex" style="gap:4px;flex-shrink:0">
           ${isAdmin ? `<button class="btn btn-sm edit-only" onclick="event.stopPropagation();openEditNotice('${n.id}')"><i class="ti ti-edit"></i></button>
           <button class="btn btn-sm btn-danger edit-only" onclick="event.stopPropagation();deleteNotice('${n.id}')"><i class="ti ti-trash"></i></button>` : ''}
         </div>
@@ -468,8 +468,8 @@ function renderBoardList() {
     const previewText = (p.content||'').replace(/\[이미지\d+\]/g, '📷 ').trim();
     return `<div class="notice-card" onclick="openPostDetail('${p.id}')">
       <div class="flex-between mb-1">
-        <strong style="font-size:14px">${titleHtml}</strong>
-        <div class="flex" style="gap:4px">
+        <strong style="font-size:14px;min-width:0">${titleHtml}</strong>
+        <div class="flex" style="gap:4px;flex-shrink:0">
           ${canManage ? `<button class="btn btn-sm" onclick="event.stopPropagation();openEditPost('${p.id}')"><i class="ti ti-edit"></i></button>
           <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deletePost('${p.id}')"><i class="ti ti-trash"></i></button>` : ''}
         </div>
@@ -901,8 +901,8 @@ window.saveMyProfile = async function(id) {
 // ── 벙 CRUD ───────────────────────────────────────────────────────
 function memberSelectHTML(mode, checkedIds=[]) {
   return `<div style="display:flex;gap:6px;margin-bottom:6px">
-    <input type="text" id="member-search${mode==='edit'?'-edit':''}" placeholder="이름 입력 후 엔터 또는 쉼표로 구분" style="flex:1" onkeydown="handleAttendeeInput(event,'${mode}')">
-    <button class="btn btn-sm" onclick="handleAttendeeAdd('${mode}')" type="button">추가</button>
+    <input type="text" id="member-search${mode==='edit'?'-edit':''}" placeholder="이름 입력 후 엔터 또는 쉼표로 구분" style="flex:1;min-width:0" onkeydown="handleAttendeeInput(event,'${mode}')">
+    <button class="btn btn-sm" onclick="handleAttendeeAdd('${mode}')" type="button" style="flex-shrink:0">추가</button>
   </div>
   <div id="${mode}-tag-area" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:28px">${checkedIds.map(id=>{const m=members.find(x=>x.id===id);return m?`<span class="attendee-tag" data-id="${m.id}">${m.name} <span onclick="removeAttendeeTag(this,'${mode}')" style="cursor:pointer;margin-left:2px">×</span></span>`:''}).join('')}</div>
   <div class="attendee-scroll" id="${mode}-attendee-list">${members.map(m=>`<label class="attendee-label" data-name="${m.name}" data-id="${m.id}" onclick="toggleAttendeeTag(this,'${mode}')" style="cursor:pointer"><input type="checkbox" class="attend-check" value="${m.id}" ${checkedIds.includes(m.id)?'checked':''}> ${m.name}</label>`).join('')}</div>`;
@@ -1046,7 +1046,7 @@ function renderGallery() {
   el.innerHTML = galleryFiles.map((f,i) => `
     <div style="position:relative;aspect-ratio:1;overflow:hidden;border-radius:var(--radius-lg);background:var(--bg2);border:0.5px solid var(--border);cursor:pointer" onclick="openLightbox(${i})">
       <img src="${f.url}" style="width:100%;height:100%;object-fit:cover" loading="lazy" alt="${f.name}">
-      ${isAdmin ? `<button onclick="event.stopPropagation();deletePhoto(${i})" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.55);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;display:none;align-items:center;justify-content:center;font-size:12px" class="del-btn edit-only"><i class="ti ti-x"></i></button>` : ''}
+      ${isAdmin ? `<button onclick="event.stopPropagation();deletePhoto(${i})" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.55);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px" class="del-btn edit-only"><i class="ti ti-x"></i></button>` : ''}
     </div>`).join('');
 }
 
@@ -1729,8 +1729,8 @@ function renderLinkRequests() {
   if (pending.length === 0) { el.innerHTML = ''; return; }
   el.innerHTML = `<div class="alert alert-info" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:1rem">
     <div style="font-weight:500"><i class="ti ti-user-plus"></i> 프로필 연결 요청 (${pending.length}건)</div>
-    ${pending.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border-radius:var(--radius);padding:8px 12px">
-      <span style="font-size:13px">"<strong>${m.linkPendingName}</strong>"님이 <strong>${m.name}</strong> 회원으로 연결을 요청했습니다.</span>
+    ${pending.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border-radius:var(--radius);padding:8px 12px;flex-wrap:wrap">
+      <span style="font-size:13px;min-width:0">"<strong>${m.linkPendingName}</strong>"님이 <strong>${m.name}</strong> 회원으로 연결을 요청했습니다.</span>
       <div class="flex" style="gap:6px;flex-shrink:0">
         <button class="btn btn-sm btn-primary" onclick="approveProfileLink('${m.id}')">승인</button>
         <button class="btn btn-sm btn-danger" onclick="rejectProfileLink('${m.id}')">거부</button>
@@ -1785,8 +1785,8 @@ function renderBungs() {
     const settledBadge = b.settlement ? '<span class="badge badge-safe"><i class="ti ti-receipt-2" style="font-size:11px"></i> 정산완료</span>' : '';
     return `<div style="background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;margin-bottom:10px">
       <div class="flex-between mb-1">
-        <div class="flex">${typeBadge}<strong>${b.name}</strong>${isPast?'<span class="badge badge-safe">완료</span>':'<span class="badge badge-new">예정</span>'}${settledBadge}</div>
-        <div class="flex" style="gap:4px">
+        <div class="flex" style="min-width:0;flex-wrap:wrap">${typeBadge}<strong>${b.name}</strong>${isPast?'<span class="badge badge-safe">완료</span>':'<span class="badge badge-new">예정</span>'}${settledBadge}</div>
+        <div class="flex" style="gap:4px;flex-wrap:wrap">
           <button class="btn btn-sm btn-info" onclick="openTemplate('${b.id}')"><i class="ti ti-speakerphone"></i> 공지</button>
           ${isPast?`<button class="btn btn-sm" onclick="openBungRecap('${b.id}')"><i class="ti ti-sparkles"></i> 회고</button>`:''}
           <button class="btn btn-sm" onclick="openSettlement('${b.id}')"><i class="ti ti-calculator"></i> 정산</button>
@@ -1827,7 +1827,7 @@ function renderGhost() {
   } else {
     if (ghostList.length>0) {
       html += `<div class="section-label">퇴출 대상 (${ghostList.length}명)</div>`;
-      html += '<div style="border:0.5px solid var(--danger-border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:1rem"><table><thead><tr><th>이름</th><th>가입일</th><th>마지막 참여</th><th>조건1</th><th>조건2</th><th>조건3</th></tr></thead><tbody>';
+      html += '<div style="border:0.5px solid var(--danger-border);border-radius:var(--radius-lg);overflow-x:auto;margin-bottom:1rem"><table style="min-width:520px"><thead><tr><th>이름</th><th>가입일</th><th>마지막 참여</th><th>조건1</th><th>조건2</th><th>조건3</th></tr></thead><tbody>';
       ghostList.forEach(m=>{
         const c1=new Date(m.joinDate)<=twoMonthsAgo?'<span style="color:var(--danger)">✗ 2달↑</span>':'<span style="color:var(--success)">✓ 신규</span>';
         const la=m.lastAttend?new Date(m.lastAttend):null;
@@ -1839,7 +1839,7 @@ function renderGhost() {
     }
     if (warnList.length>0) {
       html += `<div class="section-label">연락 완료 — 유예 (${warnList.length}명)</div>`;
-      html += '<div style="border:0.5px solid var(--warn-border);border-radius:var(--radius-lg);overflow:hidden"><table><thead><tr><th>이름</th><th>가입일</th><th>마지막 참여</th></tr></thead><tbody>';
+      html += '<div style="border:0.5px solid var(--warn-border);border-radius:var(--radius-lg);overflow-x:auto"><table style="min-width:320px"><thead><tr><th>이름</th><th>가입일</th><th>마지막 참여</th></tr></thead><tbody>';
       warnList.forEach(m=>{html+=`<tr><td><strong>${m.name}</strong></td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'없음'}</td></tr>`;});
       html += '</tbody></table></div>';
     }
@@ -1879,8 +1879,8 @@ function renderStats() {
     </div>
   </div>
   <div><h3>전체 회원 최근 2개월 참여율</h3>
-    <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
-      <table><thead><tr><th>순위</th><th>이름</th><th>등급</th><th>참석</th><th>참여율</th><th>그래프</th></tr></thead><tbody>
+    <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto">
+      <table style="min-width:480px"><thead><tr><th>순위</th><th>이름</th><th>등급</th><th>참석</th><th>참여율</th><th>그래프</th></tr></thead><tbody>
       ${stats.map((s,i)=>`<tr><td style="color:var(--text2)">${i+1}</td><td><strong>${s.name}</strong></td>
         <td><span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${s.grade.bg};color:${s.grade.color};font-weight:500">${s.grade.label}</span></td>
         <td>${s.attended}회</td><td style="font-weight:500;color:${s.grade.color}">${s.rate}%</td>
@@ -1920,8 +1920,8 @@ function renderReport() {
   const quarters = Object.keys(quarterMap).sort();
   el.innerHTML = `
   <div style="margin-bottom:1.5rem"><h3>📊 월별 벙 현황</h3>
-    <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:12px">
-      <table><thead><tr><th>월</th><th>횟수</th><th>정모</th><th>번개</th><th>평균 참석</th><th>그래프</th></tr></thead><tbody>
+    <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto;margin-bottom:12px">
+      <table style="min-width:520px"><thead><tr><th>월</th><th>횟수</th><th>정모</th><th>번개</th><th>평균 참석</th><th>그래프</th></tr></thead><tbody>
       ${months.map(k=>{
         const m=monthMap[k];const avg=m.count>0?Math.round(m.attendTotal/m.count):0;const [y,mo]=k.split('-');
         return `<tr><td><strong>${y}년 ${parseInt(mo)}월</strong></td><td>${m.count}회</td>
@@ -2006,16 +2006,16 @@ function renderHall() {
       </div>`).join('')}</div>`}
   </div>
   ${streakRanking.length>0?`<div class="hall-card"><h3>🔥 연속 참석 스트릭 랭킹</h3>
-    <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
-      <table><thead><tr><th>순위</th><th>이름</th><th>최장 연속</th><th>그래프</th></tr></thead><tbody>
+    <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto">
+      <table style="min-width:380px"><thead><tr><th>순위</th><th>이름</th><th>최장 연속</th><th>그래프</th></tr></thead><tbody>
       ${streakRanking.map((m,i)=>`<tr><td style="color:var(--text2)">${i+1}</td><td><strong>${m.name}</strong></td>
         <td style="color:var(--warn);font-weight:500">${m.maxStreak}회</td>
         <td style="min-width:80px"><div style="background:var(--bg3);border-radius:4px;height:7px;overflow:hidden"><div style="width:${Math.round(m.maxStreak/streakRanking[0].maxStreak*100)}%;background:var(--warn);height:100%;border-radius:4px"></div></div></td>
       </tr>`).join('')}
       </tbody></table></div></div>`:''}
   ${hostRanking.length>0?`<div class="hall-card"><h3>🎙️ 벙주 랭킹</h3>
-    <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
-      <table><thead><tr><th>순위</th><th>이름</th><th>전체</th><th>정모</th></tr></thead><tbody>
+    <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto">
+      <table style="min-width:340px"><thead><tr><th>순위</th><th>이름</th><th>전체</th><th>정모</th></tr></thead><tbody>
       ${hostRanking.map((m,i)=>`<tr><td>${i===0?'👑':i===1?'🥈':i===2?'🥉':i+1}</td><td><strong>${m.name}</strong></td>
         <td style="font-weight:500">${m.hosted}회</td><td style="color:var(--info)">${m.jeongmoHosted}회</td></tr>`).join('')}
       </tbody></table></div></div>`:''}
@@ -2146,7 +2146,7 @@ function renderMemberProfile(id) {
       ${m.favArtist?`<span><i class="ti ti-microphone-2" style="color:var(--purple)"></i> 최애 아티스트: <strong style="color:var(--text)">${m.favArtist}</strong></span>`:''}
       ${m.favSong?`<span><i class="ti ti-music" style="color:var(--info)"></i> 최애곡: <strong style="color:var(--text)">${m.favSong}</strong></span>`:''}
     </div>`:''}
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+    <div class="profile-stat-grid">
       <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center"><div style="font-size:20px;font-weight:500;color:var(--info)">${rate}%</div><div style="font-size:11px;color:var(--text2);margin-top:2px">참여율</div></div>
       <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center"><div style="font-size:20px;font-weight:500">${attended.length}</div><div style="font-size:11px;color:var(--text2);margin-top:2px">참석 벙</div></div>
       <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center"><div style="font-size:20px;font-weight:500;color:var(--warn)">${maxStreak}</div><div style="font-size:11px;color:var(--text2);margin-top:2px">최장 연속</div></div>
@@ -2223,8 +2223,8 @@ function renderMemberProfile(id) {
   <div class="profile-card">
     <div style="font-size:13px;font-weight:500;margin-bottom:10px">참석 벙 목록 (${attended.length}개)</div>
     ${attendedBungs.length===0?'<div style="font-size:13px;color:var(--text2)">참석한 벙이 없습니다.</div>':
-    `<div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
-      <table><thead><tr><th>날짜</th><th>벙 이름</th><th>구분</th><th>장소</th></tr></thead><tbody>
+    `<div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto">
+      <table style="min-width:400px"><thead><tr><th>날짜</th><th>벙 이름</th><th>구분</th><th>장소</th></tr></thead><tbody>
       ${attendedBungs.slice(0,20).map(b=>`<tr>
         <td style="color:var(--text2)">${formatDate(b.date)}</td><td><strong>${b.name}</strong></td>
         <td>${b.type==='번개'?'<span class="badge badge-bungae">번개</span>':'<span class="badge badge-jeongmo">정모</span>'}</td>
@@ -2263,9 +2263,9 @@ function renderTournamentsCard() {
       const roundNames=['16강','8강','4강','결승'];
       const totalRounds=Math.log2(t.candidates.length);
       const roundLabel=roundNames[totalRounds-1-((totalRounds-1)-t.currentRound)]||`${t.currentRound+1}라운드`;
-      return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px">
-        <div><div style="font-size:13px;font-weight:500">🎶 ${t.title}</div><div style="font-size:11px;color:var(--text2);margin-top:2px">${roundLabel} 진행 중 · 후보 ${t.candidates.length}곡</div></div>
-        <div style="display:flex;gap:6px">
+      return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+        <div style="min-width:0"><div style="font-size:13px;font-weight:500">🎶 ${t.title}</div><div style="font-size:11px;color:var(--text2);margin-top:2px">${roundLabel} 진행 중 · 후보 ${t.candidates.length}곡</div></div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
           <button class="btn btn-sm btn-primary" onclick="openTournamentVote('${t.id}')">투표하기</button>
           ${isAdmin?`<button class="btn btn-sm" onclick="advanceTournamentRound('${t.id}')">다음 라운드</button>`:''}
         </div>
@@ -3055,6 +3055,18 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v3.25.1',date:'2026.06.25',items:['[버그 수정] 갤러리 사진 삭제(X) 버튼이 호버 시 보이도록 하는 CSS가 없어서 운영진도 버튼을 볼 수 없던 문제 수정 — 항상 표시되도록 변경 (모바일은 호버가 없어 이 방식이 맞음)']},
+  {version:'v3.25.0',date:'2026.06.25',items:['반응형 개선 11단계: 회원 프로필 탭 — 프로필 상세의 4칸 통계(참여율/참석벙/연속/벙주)가 좁은 화면에서 너무 빡빡해지던 것을 2칸으로 전환','참석 벙 목록 테이블의 overflow:hidden → 가로 스크롤 방식으로 변경 (프로필 목록 그리드, 월별 차트, 도장판, 궁합카드, 롤링페이퍼는 기존부터 반응형이라 손 안 댐)']},
+  {version:'v3.24.0',date:'2026.06.25',items:['반응형 개선 10단계: 놀이터 탭 — 진행 중인 노래 토너먼트 카드의 제목과 투표/다음라운드 버튼이 좁은 화면에서 줄바꿈되도록 수정 (이상형월드컵 카드/투표 화면은 이전 패치에서 이미 대응돼 있어 추가 수정 없음)']},
+  {version:'v3.23.0',date:'2026.06.25',items:['반응형 개선 9단계: 명예의 전당 탭 — 연속참석 스트릭/벙주 랭킹 테이블의 overflow:hidden → 가로 스크롤 방식으로 변경해 좁은 화면에서 내용이 잘리지 않게 수정']},
+  {version:'v3.22.0',date:'2026.06.25',items:['반응형 개선 8단계: 통계 탭 — 참여율 테이블, 월별 벙현황 테이블의 overflow:hidden → 가로 스크롤 방식으로 변경해 좁은 화면에서 그래프·숫자가 잘리지 않게 수정 (분기별 리포트 카드는 기존부터 반응형이라 손 안 댐)']},
+  {version:'v3.21.0',date:'2026.06.25',items:['반응형 개선 7단계: 유령 정리 탭 — 퇴출 대상/연락완료 테이블도 회원 명단과 동일하게 overflow:hidden → 가로 스크롤 방식으로 변경해 좁은 화면에서 내용이 잘리지 않게 수정','상단 기산일 안내 텍스트 + 퇴출메시지/초기화 버튼 줄이 좁은 화면에서 줄바꿈되도록 수정']},
+  {version:'v3.20.0',date:'2026.06.25',items:['반응형 개선 6단계: 벙 관리 탭 — 벙 카드의 버튼 줄(공지/회고/정산/수정/삭제, 최대 5개)이 좁은 화면에서 카드 밖으로 넘치지 않고 줄바꿈되도록 수정','벙 제목 영역도 좁아지면 줄어들도록 보강','벙 추가/수정 모달의 참석자 검색 입력칸 보강']},
+  {version:'v3.19.0',date:'2026.06.25',items:['반응형 개선 5단계: 회원 명단 탭 — 8개 컬럼짜리 회원 테이블이 좁은 화면에서 내용이 잘려서 안 보이던 문제 수정 (overflow:hidden → 가로 스크롤 가능하게 변경, 테이블은 최소폭 유지해 글자도 안 눌림)','프로필 연결 요청 카드가 좁은 화면에서 줄바꿈되도록 보강']},
+  {version:'v3.18.0',date:'2026.06.25',items:['반응형 개선 4단계: 정산 탭 — 정산 계산기의 항목명·금액 입력 줄이 좁은 화면에서 항목명 입력칸을 누르지 않고, 금액·원·삭제 버튼이 자동으로 다음 줄로 내려가도록 변경','참가자 직접입력 칸도 좁은 화면에서 눌리지 않게 보강','정산 목록 카드의 제목/보기·삭제 버튼 영역도 다른 탭과 동일하게 안 밀리도록 수정']},
+  {version:'v3.17.0',date:'2026.06.25',items:['반응형 개선 3단계: 게시판 탭 — 자유게시판/건의사항/노래추천 서브탭 버튼 줄이 좁은 화면에서 페이지 전체를 가로로 밀어내지 않도록 그 줄만 가로 스크롤되게 변경','게시글 카드의 제목·수정/삭제 버튼 영역도 공지카드와 동일하게 제목은 줄어들고 버튼은 고정폭 유지되도록 수정']},
+  {version:'v3.16.0',date:'2026.06.25',items:['반응형 개선 2단계: 공지사항 탭 — 공지 카드의 제목·태그 영역과 수정/삭제 버튼이 좁은 화면에서 서로 밀리지 않도록 영역 분리 (제목은 줄어들고 버튼은 항상 고정폭 유지)']},
+  {version:'v3.15.0',date:'2026.06.25',items:['반응형 개선 1단계: 대시보드 탭 — 회원현황/유령현황, 최근 벙/MVP·신규·기념일 카드가 좁은 화면(640px 이하)에서 2단 그리드 대신 1단으로 쌓이도록 변경','모바일 화면에서 본문 좌우 여백, 히어로 카드·통계 카드 내부 여백을 화면 폭에 맞게 축소']},
   {version:'v3.14.0',date:'2026.06.25',items:['버전 표기 체계를 X.YY.Z 방식으로 변경 — X: 구조 개편(Firebase 전환, 놀이터 탭 신설 등) 시점에만 증가 / YY: 기능 업데이트마다 증가, X가 오르면 01부터 다시 시작 / Z: [버그 수정] 항목에서만 증가, YY가 오르면 0으로 초기화','기존 v1.0 ~ v3.14 패치 내역도 새 체계 기준으로 전체 재정리 (날짜·내용은 그대로, 버전 번호만 변경)']},
   {version:'v3.13.2',date:'2026.06.24',items:['[버그 수정] 이상형월드컵 카드의 버튼(시작/랭킹/댓글/삭제)이 폭이 좁을 때 삭제 아이콘만 다음 줄로 내려가던 문제 수정 — 카드 최소 폭을 220px → 270px로 늘려 버튼 4개가 한 줄에 여유있게 들어가도록 조정']},
   {version:'v3.13.1',date:'2026.06.24',items:['[버그 수정] 노래 토너먼트 투표 화면에서 "들어보기"를 여러 곡 연속으로 누르면 모든 곡이 동시에 재생되던 문제 수정 — 새 곡을 재생하면 이전에 재생 중이던 곡은 자동으로 정지']},
@@ -3188,8 +3200,8 @@ function renderSettlementModal() {
         <div style="font-size:12px;color:var(--text2);margin-top:6px">참석자: ${settlementParticipants().map(p=>p.name).join(', ')||'없음'}</div>
       ` : `
         <div class="flex" style="gap:8px;margin-bottom:6px">
-          <input type="text" id="settlement-name-input" placeholder="이름 입력 후 엔터" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();addSettlementManualName();}">
-          <button class="btn btn-sm" type="button" onclick="addSettlementManualName()">추가</button>
+          <input type="text" id="settlement-name-input" placeholder="이름 입력 후 엔터" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter'){event.preventDefault();addSettlementManualName();}">
+          <button class="btn btn-sm" type="button" style="flex-shrink:0" onclick="addSettlementManualName()">추가</button>
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:6px" id="settlement-name-tags">${settlementManualNames.map(n=>`<span class="attendee-tag">${n} <span style="cursor:pointer;margin-left:2px" onclick="removeSettlementManualName('${n}')">×</span></span>`).join('')||'<span style="font-size:12px;color:var(--text2)">참가자를 입력해주세요</span>'}</div>
       `}
@@ -3280,11 +3292,13 @@ function renderSettlementItems() {
   area.innerHTML = settlementItems.map(it => {
     const perPerson = it.participants.length > 0 ? Math.round(it.amount / it.participants.length) : 0;
     return `<div style="border:0.5px solid var(--border);border-radius:var(--radius);padding:12px">
-      <div class="flex" style="gap:8px;margin-bottom:10px">
-        <input type="text" placeholder="항목명 (예: 식사)" value="${it.name}" style="flex:1" oninput="updateSettlementItemField('${it.id}','name',this.value)">
-        <input type="text" placeholder="금액" value="${it.amount?it.amount.toLocaleString():''}" style="width:110px;text-align:right" oninput="updateSettlementItemField('${it.id}','amount',this.value)" onblur="formatSettlementAmountInput('${it.id}',this)">
-        <span style="display:flex;align-items:center;font-size:13px;color:var(--text2)">원</span>
-        <button class="btn btn-sm btn-danger" onclick="removeSettlementItem('${it.id}')"><i class="ti ti-trash"></i></button>
+      <div class="settle-item-row">
+        <input type="text" class="settle-item-name" placeholder="항목명 (예: 식사)" value="${it.name}" oninput="updateSettlementItemField('${it.id}','name',this.value)">
+        <div class="settle-item-amount-group">
+          <input type="text" placeholder="금액" value="${it.amount?it.amount.toLocaleString():''}" style="width:110px;text-align:right" oninput="updateSettlementItemField('${it.id}','amount',this.value)" onblur="formatSettlementAmountInput('${it.id}',this)">
+          <span style="font-size:13px;color:var(--text2)">원</span>
+          <button class="btn btn-sm btn-danger" onclick="removeSettlementItem('${it.id}')"><i class="ti ti-trash"></i></button>
+        </div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         ${participants.length===0?'<span style="font-size:12px;color:var(--text2)">참가자가 없습니다</span>':participants.map(p=>{
@@ -3385,8 +3399,8 @@ function renderSettlementList() {
     if (items.length === 0) { el.innerHTML = '<div class="empty-state"><i class="ti ti-calculator"></i>정산 내역이 없습니다.</div>'; return; }
     el.innerHTML = items.map(s => `<div style="background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;margin-bottom:10px">
       <div class="flex-between mb-1">
-        <div class="flex"><strong>${s.title}</strong><span style="font-size:12px;color:var(--text2)">${formatDate(s.date)}</span></div>
-        <div class="flex" style="gap:4px">
+        <div class="flex" style="min-width:0;flex:1;flex-wrap:wrap"><strong>${s.title}</strong><span style="font-size:12px;color:var(--text2)">${formatDate(s.date)}</span></div>
+        <div class="flex" style="gap:4px;flex-shrink:0">
           <button class="btn btn-sm" onclick="viewSettlement('${s.id}')"><i class="ti ti-eye"></i> 보기</button>
           <button class="btn btn-sm btn-danger edit-only" onclick="deleteSettlement('${s.id}','${s.bungId||''}')"><i class="ti ti-trash"></i></button>
         </div>

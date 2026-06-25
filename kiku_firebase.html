@@ -138,8 +138,20 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
 .notice-tag.important{background:var(--danger-bg);color:var(--danger)}
 .notice-tag.normal{background:var(--info-bg);color:var(--info)}
 .notice-tag.pinned{background:var(--warn-bg);color:var(--warn)}
+.settle-item-row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.settle-item-name{flex:1;min-width:120px}
+.settle-item-amount-group{display:flex;gap:8px;align-items:center;flex-shrink:0}
+.board-tabs-row{display:flex;gap:8px;margin-bottom:1rem;border-bottom:0.5px solid var(--border);padding-bottom:0;overflow-x:auto}
+.board-tabs-row .board-tab{flex-shrink:0}
+.profile-stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.dash-grid-2col{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
 @media(max-width:640px){
+  .dash-grid-2col{grid-template-columns:1fr}
+  .profile-stat-grid{grid-template-columns:repeat(2,1fr)}
+  .main-content{padding:0.875rem}
+  .hero-card{padding:1.25rem 1rem}
+  .stat-card-big{padding:1rem}
   .sidebar{width:100%;height:auto;position:fixed;bottom:0;top:auto;border-right:none;border-top:0.5px solid var(--border);flex-direction:row;overflow-x:auto;z-index:50}
   .sidebar-header{display:none}
   .sidebar-nav{display:flex;flex-direction:row;padding:0;overflow-x:auto;flex:1}
@@ -218,11 +230,11 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
         <div id="dashboard-alerts" style="margin-bottom:1rem"></div>
         <div id="dash-hero" style="margin-bottom:12px"></div>
         <div id="dash-song" style="margin-bottom:12px"></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div class="dash-grid-2col">
           <div id="dash-stats-card"></div>
           <div id="dash-ghost-card"></div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div class="dash-grid-2col">
           <div id="dash-recent-bung"></div>
           <div style="display:flex;flex-direction:column;gap:12px">
             <div id="dash-mvp"></div>
@@ -243,7 +255,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
       </div>
 
       <div id="sec-board" class="section">
-        <div class="flex" style="gap:8px;margin-bottom:1rem;border-bottom:0.5px solid var(--border);padding-bottom:0">
+        <div class="board-tabs-row">
           <button class="btn btn-sm board-tab active" data-type="free" onclick="switchBoardType('free')"><i class="ti ti-messages"></i> 자유게시판</button>
           <button class="btn btn-sm board-tab" data-type="suggestion" onclick="switchBoardType('suggestion')"><i class="ti ti-bulb"></i> 건의사항</button>
           <button class="btn btn-sm board-tab" data-type="song" onclick="switchBoardType('song')"><i class="ti ti-music"></i> 노래 추천</button>
@@ -279,8 +291,8 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
             <button class="btn btn-primary edit-only" onclick="openAddMember()"><i class="ti ti-plus"></i>회원 추가</button>
           </div>
         </div>
-        <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
-          <table><thead><tr><th>이름</th><th>가입일</th><th>최근 참여일</th><th style="text-align:center">운영진 연락</th><th>상태</th><th>등급</th><th>메모</th><th class="edit-only"></th></tr></thead>
+        <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto">
+          <table style="min-width:640px"><thead><tr><th>이름</th><th>가입일</th><th>최근 참여일</th><th style="text-align:center">운영진 연락</th><th>상태</th><th>등급</th><th>메모</th><th class="edit-only"></th></tr></thead>
           <tbody id="member-tbody"></tbody></table>
           <div id="member-empty" class="empty-state" style="display:none"><i class="ti ti-users"></i>등록된 회원이 없습니다.</div>
         </div>
@@ -307,7 +319,7 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
         </div>
         <div class="flex-between mb-2">
           <h3 style="margin-bottom:0">유령 판정 목록</h3>
-          <div class="flex">
+          <div class="flex" style="flex-wrap:wrap">
             <span class="text-sm text-secondary" id="ghost-calc-info"></span>
             <button class="btn btn-info btn-sm edit-only" onclick="openGhostMessage()"><i class="ti ti-message"></i>퇴출 메시지</button>
             <button class="btn btn-danger btn-sm edit-only" id="reset-btn" onclick="confirmReset()" style="display:none"><i class="ti ti-refresh"></i>초기화</button>
