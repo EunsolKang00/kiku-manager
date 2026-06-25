@@ -2513,7 +2513,7 @@ function renderIdealCupList() {
 window.setIcSortMode = function(mode) { icSortMode = mode; renderIdealCupList(); };
 
 function renderIdealCupCard(c) {
-  const thumbs = (c.lineups||[]).slice(0,2);
+  const thumbs = shuffleArray(c.lineups||[]).slice(0,2);
   const canManage = isAdmin || (currentUser && c.creatorUid===currentUser.uid);
   return `<div class="hall-card" style="padding:0;overflow:hidden">
     <div style="display:flex;height:160px">
@@ -2798,7 +2798,8 @@ window.openIdealCupPlay = function(cupId) {
   if (total < 2) { alert('라인업이 부족합니다.'); return; }
   let sizes = []; let p = 2;
   while (p < total) { sizes.push(p); p *= 2; }
-  sizes.push(p);
+  const maxEven = total % 2 === 0 ? total : total - 1;
+  if (maxEven > (sizes[sizes.length-1] || 0)) sizes.push(maxEven);
   openModal(`<div class="modal-title">🏆 ${cup.title} 시작하기</div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:10px">몇 강으로 진행할까요? (등록된 라인업 ${total}개)</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
@@ -2849,9 +2850,9 @@ function renderIdealCupPlayMatch() {
 function renderIdealCupMedia(entry) {
   if (entry.youtubeUrl) {
     const vid = getYoutubeId(entry.youtubeUrl);
-    return `<div style="width:100%;aspect-ratio:16/9;border-radius:var(--radius);overflow:hidden;background:var(--bg2)"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/${vid}" title="${entry.name}" style="border:none" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>`;
+    return `<div class="ic-media-box" style="width:100%;aspect-ratio:16/9;border-radius:var(--radius);overflow:hidden;background:var(--bg2)"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/${vid}" title="${entry.name}" style="border:none" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>`;
   }
-  return `<div style="width:100%;aspect-ratio:1/1;border-radius:var(--radius);overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${entry.imageUrl?`<img src="${entry.imageUrl}" style="width:100%;height:100%;object-fit:contain">`:'<i class="ti ti-photo" style="color:var(--text2);font-size:24px"></i>'}</div>`;
+  return `<div class="ic-media-box" style="width:100%;aspect-ratio:1/1;border-radius:var(--radius);overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${entry.imageUrl?`<img src="${entry.imageUrl}" style="width:100%;height:100%;object-fit:contain">`:'<i class="ti ti-photo" style="color:var(--text2);font-size:24px"></i>'}</div>`;
 }
 
 window.chooseIdealCupWinner = function(key) {
@@ -2875,7 +2876,7 @@ window.chooseIdealCupWinner = function(key) {
   setTimeout(() => {
     if (_icPlay !== p) return; // 그 사이에 그만하기 등으로 상태가 바뀐 경우 무시
     advanceIdealCupLocal(winner, loser, false);
-  }, 420);
+  }, 700);
 };
 
 function advanceIdealCupLocal(winner, loser, isBye) {
@@ -2886,8 +2887,17 @@ function advanceIdealCupLocal(winner, loser, isBye) {
   p.matchIdx++;
   if (p.matchIdx >= p.roundMatches.length) {
     if (p.roundWinners.length === 1) { finishIdealCupPlay(p.roundWinners[0]); return; }
+    const winners = p.roundWinners;
     const nextMatches = [];
-    for (let i=0;i<p.roundWinners.length;i+=2) nextMatches.push({ a:p.roundWinners[i], b:p.roundWinners[i+1], bye:false });
+    if (winners.length % 2 === 1) {
+      // 2의 거듭제곱이 아닌 강수 선택 시, 라운드 중간에 인원이 홀수가 될 수 있음 — 한 명을 무작위로 부전승 처리
+      const byeIdx = Math.floor(Math.random()*winners.length);
+      nextMatches.push({ a: winners[byeIdx], b: null, bye: true });
+      const rest = winners.filter((_,idx)=>idx!==byeIdx);
+      for (let i=0;i<rest.length;i+=2) nextMatches.push({ a:rest[i], b:rest[i+1], bye:false });
+    } else {
+      for (let i=0;i<winners.length;i+=2) nextMatches.push({ a:winners[i], b:winners[i+1], bye:false });
+    }
     p.roundMatches = nextMatches;
     p.matchIdx = 0;
     p.roundWinners = [];
@@ -3070,6 +3080,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v4.13.0',date:'2026.06.25',items:['이상형 월드컵 선택 애니메이션 방식을 변경 — 팝업 자체가 커지며 사진이 잘려 보이던 문제 해결 (영역 크기는 그대로 두고 사진만 확대/축소되는 방식으로 전환), 확대 후 화면을 보여주는 시간과 확대 애니메이션 속도를 살짤 늘림','이상형 월드컵 목록 카드의 썸네일 2장이 고정되지 않고 들어갈 때마다 라인업 중 무작위 2개로 표시되도록 변경','이상형 월드컵 강수 선택 옵션 개선 — 라인업 개수가 2의 거듭제곱이 아닐 때 무리하게 다음 거듭제곱(예: 37명에 64강)으로 건너뛰지 않고, 라인업 수에 맞는 가장 큰 짝수를 최대 옵션으로 제시 (예: 37명 → 4·8·16·32·36강, 41명 → 4·8·16·32·40강). 진행 중 인원이 홀수가 되는 라운드는 자동으로 한 명을 부전승 처리']},
   {version:'v4.12.0',date:'2026.06.25',items:['이상형 월드컵 플레이 화면에 선택 애니메이션 추가 — 후보 선택 시 고른 쪽이 화면을 가득 채우듯 커지고 반대쪽은 사라지는 모션 후 다음 대진으로 자동 전환 (사진/유튜브 영상 매치 모두 동일하게 적용)']},
   {version:'v4.11.2',date:'2026.06.25',items:['[버그 수정] 캘린더 탭에서 벙 이름이 길면 날짜 칸이 억지로 넓어지면서 모바일 화면이 깨지던 문제 수정 — CSS Grid 컬럼을 minmax(0,1fr)로 변경해 내용 길이와 상관없이 칸이 화면 폭에 맞춰 줄어들도록 함 (말줄임 처리는 원래도 있었지만 칸 자체가 늘어나 무용지물이었음)']},
   {version:'v4.11.1',date:'2026.06.25',items:['[버그 수정] 갤러리 사진 삭제(X) 버튼이 호버 시 보이도록 하는 CSS가 없어서 운영진도 버튼을 볼 수 없던 문제 수정 — 항상 표시되도록 변경 (모바일은 호버가 없어 이 방식이 맞음)']},
