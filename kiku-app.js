@@ -2828,19 +2828,19 @@ function renderIdealCupPlayMatch() {
   const roundLabel = idealCupRoundLabel(p.roundMatches.length);
   openModal(`<div class="modal-title">🏆 ${p.cupTitle} · ${roundLabel}</div>
     <div style="font-size:11px;color:var(--text2);margin-bottom:10px">${p.matchIdx+1}/${p.roundMatches.length}경기</div>
-    <div style="display:flex;gap:10px;margin-bottom:14px;align-items:stretch">
-      <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+    <div class="ic-vs-wrap" id="ic-vs-wrap">
+      <div class="ic-vs-side" id="ic-side-a">
         ${renderIdealCupMedia(match.a)}
         <div style="font-size:14px;font-weight:600;text-align:center">${match.a.name}</div>
         ${match.a.desc?`<div style="font-size:11px;color:var(--text2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${match.a.desc}</div>`:''}
-        <button class="btn btn-primary" style="width:100%" onclick="chooseIdealCupWinner('a')">선택</button>
+        <button class="btn btn-primary" id="ic-btn-a" style="width:100%" onclick="chooseIdealCupWinner('a')">선택</button>
       </div>
-      <div style="display:flex;align-items:center;font-size:12px;color:var(--text2);font-weight:600">VS</div>
-      <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+      <div class="ic-vs-mid" id="ic-vs-mid">VS</div>
+      <div class="ic-vs-side" id="ic-side-b">
         ${renderIdealCupMedia(match.b)}
         <div style="font-size:14px;font-weight:600;text-align:center">${match.b.name}</div>
         ${match.b.desc?`<div style="font-size:11px;color:var(--text2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${match.b.desc}</div>`:''}
-        <button class="btn btn-primary" style="width:100%" onclick="chooseIdealCupWinner('b')">선택</button>
+        <button class="btn btn-primary" id="ic-btn-b" style="width:100%" onclick="chooseIdealCupWinner('b')">선택</button>
       </div>
     </div>
     <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeIdealCupPlay()">그만하기</button></div>`, 'lg');
@@ -2860,7 +2860,22 @@ window.chooseIdealCupWinner = function(key) {
   const match = p.roundMatches[p.matchIdx];
   const winner = match[key];
   const loser = match[key==='a'?'b':'a'];
-  advanceIdealCupLocal(winner, loser, false);
+  const winKey = key, loseKey = key==='a'?'b':'a';
+  const sideWin = document.getElementById(`ic-side-${winKey}`);
+  const sideLose = document.getElementById(`ic-side-${loseKey}`);
+  const mid = document.getElementById('ic-vs-mid');
+  const btnA = document.getElementById('ic-btn-a');
+  const btnB = document.getElementById('ic-btn-b');
+  if (btnA) btnA.disabled = true;
+  if (btnB) btnB.disabled = true;
+  if (!sideWin || !sideLose) { advanceIdealCupLocal(winner, loser, false); return; }
+  sideWin.classList.add('ic-win');
+  sideLose.classList.add('ic-lose');
+  if (mid) mid.classList.add('ic-fade');
+  setTimeout(() => {
+    if (_icPlay !== p) return; // 그 사이에 그만하기 등으로 상태가 바뀐 경우 무시
+    advanceIdealCupLocal(winner, loser, false);
+  }, 420);
 };
 
 function advanceIdealCupLocal(winner, loser, isBye) {
@@ -3055,6 +3070,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v4.12.0',date:'2026.06.25',items:['이상형 월드컵 플레이 화면에 선택 애니메이션 추가 — 후보 선택 시 고른 쪽이 화면을 가득 채우듯 커지고 반대쪽은 사라지는 모션 후 다음 대진으로 자동 전환 (사진/유튜브 영상 매치 모두 동일하게 적용)']},
   {version:'v4.11.2',date:'2026.06.25',items:['[버그 수정] 캘린더 탭에서 벙 이름이 길면 날짜 칸이 억지로 넓어지면서 모바일 화면이 깨지던 문제 수정 — CSS Grid 컬럼을 minmax(0,1fr)로 변경해 내용 길이와 상관없이 칸이 화면 폭에 맞춰 줄어들도록 함 (말줄임 처리는 원래도 있었지만 칸 자체가 늘어나 무용지물이었음)']},
   {version:'v4.11.1',date:'2026.06.25',items:['[버그 수정] 갤러리 사진 삭제(X) 버튼이 호버 시 보이도록 하는 CSS가 없어서 운영진도 버튼을 볼 수 없던 문제 수정 — 항상 표시되도록 변경 (모바일은 호버가 없어 이 방식이 맞음)']},
   {version:'v4.11.0',date:'2026.06.25',items:['반응형 개선 11단계: 회원 프로필 탭 — 프로필 상세의 4칸 통계(참여율/참석벙/연속/벙주)가 좁은 화면에서 너무 빡빡해지던 것을 2칸으로 전환','참석 벙 목록 테이블의 overflow:hidden → 가로 스크롤 방식으로 변경 (프로필 목록 그리드, 월별 차트, 도장판, 궁합카드, 롤링페이퍼는 기존부터 반응형이라 손 안 댐)']},
