@@ -146,15 +146,6 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
 .profile-stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .dash-grid-2col{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
-.ic-vs-wrap{display:flex;gap:10px;margin-bottom:14px;align-items:stretch}
-.ic-vs-side{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0;position:relative;transition:opacity 0.5s ease}
-.ic-vs-side .ic-media-box{transition:transform 0.5s cubic-bezier(.3,1.3,.6,1)}
-.ic-vs-side.ic-win{z-index:2}
-.ic-vs-side.ic-win .ic-media-box{transform:scale(1.14)}
-.ic-vs-side.ic-lose{opacity:0.2}
-.ic-vs-side.ic-lose .ic-media-box{transform:scale(0.88)}
-.ic-vs-mid{display:flex;align-items:center;font-size:12px;color:var(--text2);font-weight:600;transition:opacity 0.3s ease}
-.ic-vs-mid.ic-fade{opacity:0}
 @media(max-width:640px){
   .dash-grid-2col{grid-template-columns:1fr}
   .profile-stat-grid{grid-template-columns:repeat(2,1fr)}

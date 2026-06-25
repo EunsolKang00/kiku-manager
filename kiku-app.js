@@ -140,12 +140,11 @@ function refreshAdminStatus() {
   const wasAdmin = isAdmin;
   const me = members.find(m => m.linkedUid === currentUser.uid);
   isAdmin = ADMIN_EMAILS.includes(currentUser.email) || (me && (me.role === 'admin' || me.role === 'host'));
-  if (isAdmin !== wasAdmin) {
-    updateEditMode();
-    const sidebarUser = document.getElementById('sidebar-user');
-    if (sidebarUser) {
-      sidebarUser.innerHTML = `<i class="ti ti-user" style="font-size:12px"></i>${currentUser.displayName||currentUser.email}${isAdmin?'<span style="font-size:10px;background:var(--warn-bg);color:var(--warn);padding:1px 5px;border-radius:3px;margin-left:4px">운영진</span>':''}`;
-    }
+  if (isAdmin !== wasAdmin) updateEditMode();
+  const sidebarUser = document.getElementById('sidebar-user');
+  if (sidebarUser) {
+    const name = resolveDisplayName(currentUser.uid, currentUser.displayName||currentUser.email);
+    sidebarUser.innerHTML = `<i class="ti ti-user" style="font-size:12px"></i>${name}${isAdmin?'<span style="font-size:10px;background:var(--warn-bg);color:var(--warn);padding:1px 5px;border-radius:3px;margin-left:4px">운영진</span>':''}`;
   }
 }
 
@@ -240,7 +239,7 @@ function renderNotices() {
         </div>
       </div>
       <div style="font-size:13px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px">${n.content}</div>
-      <div style="font-size:11px;color:var(--text3)">${n.authorName || '운영진'} · ${formatDate(date)}</div>
+      <div style="font-size:11px;color:var(--text3)">${resolveDisplayName(n.authorUid, n.authorName||'운영진')} · ${formatDate(date)}</div>
     </div>`;
   }).join('');
 }
@@ -250,7 +249,7 @@ window.openNoticeDetail = function(id) {
   if (!n) return;
   const date = n.createdAt ? new Date(n.createdAt.seconds * 1000) : new Date();
   openModal(`<div class="modal-title">${n.pinned ? '📌 ' : ''}${n.title}</div>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">${n.authorName || '운영진'} · ${formatDate(date)}</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">${resolveDisplayName(n.authorUid, n.authorName||'운영진')} · ${formatDate(date)}</div>
     <div style="font-size:13px;line-height:1.8;margin-bottom:16px">${renderClampedText(n.content, 500)}</div>
     <div class="flex" style="justify-content:flex-end"><button class="btn btn-primary" onclick="closeModal()">닫기</button></div>`);
 };
@@ -275,6 +274,7 @@ window.addNotice = async function() {
     pinned: document.getElementById('n-pinned').checked,
     important: document.getElementById('n-important').checked,
     authorName: authorDisplayName(),
+    authorUid: currentUser.uid,
     authorEmail: currentUser.email,
     createdAt: serverTimestamp(),
   });
@@ -442,6 +442,16 @@ function authorDisplayName() {
   return me ? me.name : (currentUser.displayName || currentUser.email);
 }
 
+// uid로 연결된 회원 프로필의 "현재" 닉네임을 찾아 반환. 연결된 프로필이 없으면 fallback(작성 시점 이름) 사용.
+// 프로필 닉네임이 바뀌면 과거에 작성된 글/댓글/롤링페이퍼도 이 함수를 통해 항상 최신 닉네임으로 표시됨.
+function resolveDisplayName(uid, fallback) {
+  if (uid) {
+    const m = members.find(x => x.linkedUid === uid);
+    if (m && m.name) return m.name;
+  }
+  return fallback || '회원';
+}
+
 window.switchBoardType = function(type) {
   currentBoardType = type;
   document.querySelectorAll('.board-tab').forEach(b => b.classList.toggle('active', b.dataset.type === type));
@@ -462,7 +472,7 @@ function renderBoardList() {
   }
   el.innerHTML = list.map(p => {
     const date = p.createdAt ? new Date(p.createdAt.seconds * 1000) : new Date();
-    const displayName = p.anonymous ? '익명' : (p.authorName || '회원');
+    const displayName = p.anonymous ? '익명' : resolveDisplayName(p.authorUid, p.authorName||'회원');
     const canManage = isAdmin || (currentUser && p.authorUid === currentUser.uid);
     const titleHtml = p.type === 'song' ? `<i class="ti ti-music" style="color:var(--purple);margin-right:4px"></i>${p.title}` : p.title;
     const previewText = (p.content||'').replace(/\[이미지\d+\]/g, '📷 ').trim();
@@ -636,7 +646,7 @@ function renderPostDetail() {
   const wrap = document.getElementById('board-detail');
   if (!p || !wrap) return;
   const date = p.createdAt ? new Date(p.createdAt.seconds * 1000) : new Date();
-  const displayName = p.anonymous ? '익명' : (p.authorName || '회원');
+  const displayName = p.anonymous ? '익명' : resolveDisplayName(p.authorUid, p.authorName||'회원');
   wrap.innerHTML = `
     <button class="btn btn-sm" style="margin-bottom:12px" onclick="closePostDetail()"><i class="ti ti-arrow-left"></i> 목록으로</button>
     <div class="notice-card" style="cursor:default">
@@ -651,7 +661,7 @@ function renderPostDetail() {
           const cdate = c.createdAt ? new Date(c.createdAt.seconds*1000) : new Date();
           const canDel = isAdmin || (currentUser && c.authorUid === currentUser.uid);
           return `<div style="background:var(--bg2);border-radius:var(--radius);padding:10px 12px">
-            <div class="flex-between"><span style="font-size:12px;font-weight:500">${c.authorName}</span>
+            <div class="flex-between"><span style="font-size:12px;font-weight:500">${resolveDisplayName(c.authorUid, c.authorName)}</span>
             ${canDel?`<button class="btn btn-sm" style="padding:2px 6px" onclick="deleteComment('${c.id}')"><i class="ti ti-trash" style="font-size:12px"></i></button>`:''}</div>
             <div style="font-size:13px;margin-top:4px">${renderClampedText(c.content, 300)}</div>
             <div style="font-size:10px;color:var(--text3);margin-top:4px">${formatDate(cdate)}</div>
@@ -1253,7 +1263,7 @@ function calcSeasonAwardsForMonth(ym) {
     .sort((a,b) => a.createdAt.seconds - b.createdAt.seconds);
   if (songPosts.length > 0) {
     const p = songPosts[0];
-    result.pioneer = {uid: p.authorUid, name: p.anonymous ? '익명' : (p.authorName||'회원')};
+    result.pioneer = {uid: p.authorUid, name: p.anonymous ? '익명' : resolveDisplayName(p.authorUid, p.authorName||'회원')};
   }
 
   // 2. 막차 탑승 — 이번 달 벙 중 "공지일 ~ 벙 날짜" 간격이 가장 짧았던(=급하게 잡힌) 벙에 참석한 회원 중,
@@ -1298,7 +1308,7 @@ function calcSeasonAwardsForMonth(ym) {
   if (topSongEntries.length > 0 && topSongEntries[0][1] >= 1) {
     const topSongKey = topSongEntries[0][0];
     const firstPost = songPosts.find(p => (p.songName||'').trim().toLowerCase() === topSongKey);
-    if (firstPost) result.hottrack = {uid: firstPost.authorUid, name: firstPost.anonymous?'익명':(firstPost.authorName||'회원'), song: firstPost.songName};
+    if (firstPost) result.hottrack = {uid: firstPost.authorUid, name: firstPost.anonymous?'익명':resolveDisplayName(firstPost.authorUid, firstPost.authorName||'회원'), song: firstPost.songName};
   }
 
   // 5. 이달의 수다왕 — 이번 달 게시글+댓글 합산 최다 (댓글은 postComments 서브컬렉션이라 실시간 집계가 어려워 게시글 수로 근사)
@@ -1307,7 +1317,7 @@ function calcSeasonAwardsForMonth(ym) {
   const chattyEntries = Object.entries(postCounts).sort((a,b)=>b[1]-a[1]);
   if (chattyEntries.length > 0 && chattyEntries[0][1] >= 1) {
     const samplePost = monthPosts.find(p => p.authorUid === chattyEntries[0][0]);
-    result.chatty = {uid: chattyEntries[0][0], name: samplePost?.anonymous?'익명':(samplePost?.authorName||'회원'), count: chattyEntries[0][1]};
+    result.chatty = {uid: chattyEntries[0][0], name: samplePost?.anonymous?'익명':resolveDisplayName(chattyEntries[0][0], samplePost?.authorName||'회원'), count: chattyEntries[0][1]};
   }
 
   // 6. 이달의 새싹 — 이번 달 가입한 회원 중 첫 벙 참석까지 걸린 기간이 가장 짧은 회원
@@ -1583,7 +1593,7 @@ function dateSeed(d) {
 
 function getSongPool() {
   const fromPlaylist = playlist.map(p => ({songName:p.songName, artistName:p.artistName||'', youtubeUrl:p.youtubeUrl||'', source:'playlist', addedBy:p.addedBy||'운영진'}));
-  const fromBoard = posts.filter(p=>p.type==='song' && p.songName).map(p => ({songName:p.songName, artistName:p.artistName||'', youtubeUrl:p.youtubeUrl||'', source:'board', addedBy:p.anonymous?'익명':(p.authorName||'회원')}));
+  const fromBoard = posts.filter(p=>p.type==='song' && p.songName).map(p => ({songName:p.songName, artistName:p.artistName||'', youtubeUrl:p.youtubeUrl||'', source:'board', addedBy:p.anonymous?'익명':resolveDisplayName(p.authorUid, p.authorName||'회원')}));
   return [...fromPlaylist, ...fromBoard];
 }
 
@@ -2513,7 +2523,7 @@ function renderIdealCupList() {
 window.setIcSortMode = function(mode) { icSortMode = mode; renderIdealCupList(); };
 
 function renderIdealCupCard(c) {
-  const thumbs = shuffleArray(c.lineups||[]).slice(0,2);
+  const thumbs = (c.lineups||[]).slice(0,2);
   const canManage = isAdmin || (currentUser && c.creatorUid===currentUser.uid);
   return `<div class="hall-card" style="padding:0;overflow:hidden">
     <div style="display:flex;height:160px">
@@ -2798,8 +2808,7 @@ window.openIdealCupPlay = function(cupId) {
   if (total < 2) { alert('라인업이 부족합니다.'); return; }
   let sizes = []; let p = 2;
   while (p < total) { sizes.push(p); p *= 2; }
-  const maxEven = total % 2 === 0 ? total : total - 1;
-  if (maxEven > (sizes[sizes.length-1] || 0)) sizes.push(maxEven);
+  sizes.push(p);
   openModal(`<div class="modal-title">🏆 ${cup.title} 시작하기</div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:10px">몇 강으로 진행할까요? (등록된 라인업 ${total}개)</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
@@ -2829,19 +2838,19 @@ function renderIdealCupPlayMatch() {
   const roundLabel = idealCupRoundLabel(p.roundMatches.length);
   openModal(`<div class="modal-title">🏆 ${p.cupTitle} · ${roundLabel}</div>
     <div style="font-size:11px;color:var(--text2);margin-bottom:10px">${p.matchIdx+1}/${p.roundMatches.length}경기</div>
-    <div class="ic-vs-wrap" id="ic-vs-wrap">
-      <div class="ic-vs-side" id="ic-side-a">
+    <div style="display:flex;gap:10px;margin-bottom:14px;align-items:stretch">
+      <div style="flex:1;display:flex;flex-direction:column;gap:8px">
         ${renderIdealCupMedia(match.a)}
         <div style="font-size:14px;font-weight:600;text-align:center">${match.a.name}</div>
         ${match.a.desc?`<div style="font-size:11px;color:var(--text2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${match.a.desc}</div>`:''}
-        <button class="btn btn-primary" id="ic-btn-a" style="width:100%" onclick="chooseIdealCupWinner('a')">선택</button>
+        <button class="btn btn-primary" style="width:100%" onclick="chooseIdealCupWinner('a')">선택</button>
       </div>
-      <div class="ic-vs-mid" id="ic-vs-mid">VS</div>
-      <div class="ic-vs-side" id="ic-side-b">
+      <div style="display:flex;align-items:center;font-size:12px;color:var(--text2);font-weight:600">VS</div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:8px">
         ${renderIdealCupMedia(match.b)}
         <div style="font-size:14px;font-weight:600;text-align:center">${match.b.name}</div>
         ${match.b.desc?`<div style="font-size:11px;color:var(--text2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${match.b.desc}</div>`:''}
-        <button class="btn btn-primary" id="ic-btn-b" style="width:100%" onclick="chooseIdealCupWinner('b')">선택</button>
+        <button class="btn btn-primary" style="width:100%" onclick="chooseIdealCupWinner('b')">선택</button>
       </div>
     </div>
     <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeIdealCupPlay()">그만하기</button></div>`, 'lg');
@@ -2850,9 +2859,9 @@ function renderIdealCupPlayMatch() {
 function renderIdealCupMedia(entry) {
   if (entry.youtubeUrl) {
     const vid = getYoutubeId(entry.youtubeUrl);
-    return `<div class="ic-media-box" style="width:100%;aspect-ratio:16/9;border-radius:var(--radius);overflow:hidden;background:var(--bg2)"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/${vid}" title="${entry.name}" style="border:none" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>`;
+    return `<div style="width:100%;aspect-ratio:16/9;border-radius:var(--radius);overflow:hidden;background:var(--bg2)"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/${vid}" title="${entry.name}" style="border:none" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>`;
   }
-  return `<div class="ic-media-box" style="width:100%;aspect-ratio:1/1;border-radius:var(--radius);overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${entry.imageUrl?`<img src="${entry.imageUrl}" style="width:100%;height:100%;object-fit:contain">`:'<i class="ti ti-photo" style="color:var(--text2);font-size:24px"></i>'}</div>`;
+  return `<div style="width:100%;aspect-ratio:1/1;border-radius:var(--radius);overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${entry.imageUrl?`<img src="${entry.imageUrl}" style="width:100%;height:100%;object-fit:contain">`:'<i class="ti ti-photo" style="color:var(--text2);font-size:24px"></i>'}</div>`;
 }
 
 window.chooseIdealCupWinner = function(key) {
@@ -2861,22 +2870,7 @@ window.chooseIdealCupWinner = function(key) {
   const match = p.roundMatches[p.matchIdx];
   const winner = match[key];
   const loser = match[key==='a'?'b':'a'];
-  const winKey = key, loseKey = key==='a'?'b':'a';
-  const sideWin = document.getElementById(`ic-side-${winKey}`);
-  const sideLose = document.getElementById(`ic-side-${loseKey}`);
-  const mid = document.getElementById('ic-vs-mid');
-  const btnA = document.getElementById('ic-btn-a');
-  const btnB = document.getElementById('ic-btn-b');
-  if (btnA) btnA.disabled = true;
-  if (btnB) btnB.disabled = true;
-  if (!sideWin || !sideLose) { advanceIdealCupLocal(winner, loser, false); return; }
-  sideWin.classList.add('ic-win');
-  sideLose.classList.add('ic-lose');
-  if (mid) mid.classList.add('ic-fade');
-  setTimeout(() => {
-    if (_icPlay !== p) return; // 그 사이에 그만하기 등으로 상태가 바뀐 경우 무시
-    advanceIdealCupLocal(winner, loser, false);
-  }, 700);
+  advanceIdealCupLocal(winner, loser, false);
 };
 
 function advanceIdealCupLocal(winner, loser, isBye) {
@@ -2887,17 +2881,8 @@ function advanceIdealCupLocal(winner, loser, isBye) {
   p.matchIdx++;
   if (p.matchIdx >= p.roundMatches.length) {
     if (p.roundWinners.length === 1) { finishIdealCupPlay(p.roundWinners[0]); return; }
-    const winners = p.roundWinners;
     const nextMatches = [];
-    if (winners.length % 2 === 1) {
-      // 2의 거듭제곱이 아닌 강수 선택 시, 라운드 중간에 인원이 홀수가 될 수 있음 — 한 명을 무작위로 부전승 처리
-      const byeIdx = Math.floor(Math.random()*winners.length);
-      nextMatches.push({ a: winners[byeIdx], b: null, bye: true });
-      const rest = winners.filter((_,idx)=>idx!==byeIdx);
-      for (let i=0;i<rest.length;i+=2) nextMatches.push({ a:rest[i], b:rest[i+1], bye:false });
-    } else {
-      for (let i=0;i<winners.length;i+=2) nextMatches.push({ a:winners[i], b:winners[i+1], bye:false });
-    }
+    for (let i=0;i<p.roundWinners.length;i+=2) nextMatches.push({ a:p.roundWinners[i], b:p.roundWinners[i+1], bye:false });
     p.roundMatches = nextMatches;
     p.matchIdx = 0;
     p.roundWinners = [];
@@ -3020,7 +3005,7 @@ window.openIdealCupComments = async function(cupId) {
       return `<div style="padding:8px 4px;border-bottom:0.5px solid var(--border)">
         <div style="font-size:12px;color:var(--text2);margin-bottom:2px">🏆 ${c.winnerName||'-'}</div>
         <div style="font-size:13px;margin-bottom:4px;white-space:pre-line">${c.comment}</div>
-        <div style="font-size:11px;color:var(--text2)">${c.authorName||'회원'}${date?' · '+formatDate(date):''}</div>
+        <div style="font-size:11px;color:var(--text2)">${resolveDisplayName(c.authorUid, c.authorName||'회원')}${date?' · '+formatDate(date):''}</div>
       </div>`;
     }).join('')}
     </div>
@@ -3045,7 +3030,7 @@ function renderRollingPaperList(memberId) {
   el.innerHTML = rollingMessages.map(r=>`<div style="background:var(--bg2);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px">
     <div style="font-size:13px;line-height:1.6;white-space:pre-line">${r.message}</div>
     <div class="flex-between" style="margin-top:6px">
-      <div style="font-size:11px;color:var(--text2)">- ${r.anonymous?'익명':(r.fromName||'회원')}</div>
+      <div style="font-size:11px;color:var(--text2)">- ${r.anonymous?'익명':resolveDisplayName(r.fromUid, r.fromName||'회원')}</div>
       ${(isAdmin||(currentUser&&r.fromUid===currentUser.uid))?`<button class="btn btn-sm btn-danger" onclick="deleteRollingMessage('${r.id}','${memberId}')"><i class="ti ti-trash" style="font-size:11px"></i></button>`:''}
     </div>
   </div>`).join('');
@@ -3066,7 +3051,7 @@ window.submitRollingMessage = async function(memberId) {
   const anonymous = document.getElementById('rp-anon').checked;
   await addDoc(collection(db,'rollingMessages'), {
     toMemberId: memberId, message, anonymous,
-    fromUid: currentUser.uid, fromName: currentUser.displayName||currentUser.email,
+    fromUid: currentUser.uid, fromName: authorDisplayName(),
     createdAt: serverTimestamp()
   });
   closeModal();
@@ -3080,8 +3065,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
-  {version:'v4.13.0',date:'2026.06.25',items:['이상형 월드컵 선택 애니메이션 방식을 변경 — 팝업 자체가 커지며 사진이 잘려 보이던 문제 해결 (영역 크기는 그대로 두고 사진만 확대/축소되는 방식으로 전환), 확대 후 화면을 보여주는 시간과 확대 애니메이션 속도를 살짤 늘림','이상형 월드컵 목록 카드의 썸네일 2장이 고정되지 않고 들어갈 때마다 라인업 중 무작위 2개로 표시되도록 변경','이상형 월드컵 강수 선택 옵션 개선 — 라인업 개수가 2의 거듭제곱이 아닐 때 무리하게 다음 거듭제곱(예: 37명에 64강)으로 건너뛰지 않고, 라인업 수에 맞는 가장 큰 짝수를 최대 옵션으로 제시 (예: 37명 → 4·8·16·32·36강, 41명 → 4·8·16·32·40강). 진행 중 인원이 홀수가 되는 라운드는 자동으로 한 명을 부전승 처리']},
-  {version:'v4.12.0',date:'2026.06.25',items:['이상형 월드컵 플레이 화면에 선택 애니메이션 추가 — 후보 선택 시 고른 쪽이 화면을 가득 채우듯 커지고 반대쪽은 사라지는 모션 후 다음 대진으로 자동 전환 (사진/유튜브 영상 매치 모두 동일하게 적용)']},
+  {version:'v4.12.0',date:'2026.06.25',items:['닉네임 표시 방식 전면 개편: 공지사항·게시판(글/댓글)·이상형월드컵 댓글·롤링페이퍼·사이드바의 작성자 표시를 작성 시점에 저장된 이름이 아니라, 연결된 회원 프로필의 "현재" 닉네임을 실시간으로 불러와 표시하도록 변경 — 이제 프로필 닉네임을 바꾸면 과거에 쓴 글에도 즉시 동일하게 반영됨','롤링페이퍼·사이드바 좌상단 이름이 프로필 연결 여부와 상관없이 항상 구글 계정 이름으로 표시되던 문제 수정 — 연결된 프로필이 있으면 프로필 닉네임을 우선 표시']},
   {version:'v4.11.2',date:'2026.06.25',items:['[버그 수정] 캘린더 탭에서 벙 이름이 길면 날짜 칸이 억지로 넓어지면서 모바일 화면이 깨지던 문제 수정 — CSS Grid 컬럼을 minmax(0,1fr)로 변경해 내용 길이와 상관없이 칸이 화면 폭에 맞춰 줄어들도록 함 (말줄임 처리는 원래도 있었지만 칸 자체가 늘어나 무용지물이었음)']},
   {version:'v4.11.1',date:'2026.06.25',items:['[버그 수정] 갤러리 사진 삭제(X) 버튼이 호버 시 보이도록 하는 CSS가 없어서 운영진도 버튼을 볼 수 없던 문제 수정 — 항상 표시되도록 변경 (모바일은 호버가 없어 이 방식이 맞음)']},
   {version:'v4.11.0',date:'2026.06.25',items:['반응형 개선 11단계: 회원 프로필 탭 — 프로필 상세의 4칸 통계(참여율/참석벙/연속/벙주)가 좁은 화면에서 너무 빡빡해지던 것을 2칸으로 전환','참석 벙 목록 테이블의 overflow:hidden → 가로 스크롤 방식으로 변경 (프로필 목록 그리드, 월별 차트, 도장판, 궁합카드, 롤링페이퍼는 기존부터 반응형이라 손 안 댐)']},
