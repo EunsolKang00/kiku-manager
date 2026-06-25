@@ -2529,6 +2529,7 @@ window.setIcSortMode = function(mode) { icSortMode = mode; renderIdealCupList();
 function renderIdealCupCard(c) {
   const thumbs = shuffleArray(c.lineups||[]).slice(0,2);
   const canManage = isAdmin || (currentUser && c.creatorUid===currentUser.uid);
+  const isCreator = currentUser && c.creatorUid===currentUser.uid;
   return `<div class="hall-card" style="padding:0;overflow:hidden">
     <div style="display:flex;height:160px">
       ${thumbs.map(t=>`<div style="flex:1;background:var(--bg2);overflow:hidden;display:flex;align-items:center;justify-content:center">
@@ -2543,6 +2544,7 @@ function renderIdealCupCard(c) {
         <button class="btn btn-sm btn-primary" style="white-space:nowrap" onclick="openIdealCupPlay('${c.id}')"><i class="ti ti-player-play"></i> 시작</button>
         <button class="btn btn-sm" style="white-space:nowrap" onclick="openIdealCupRanking('${c.id}')"><i class="ti ti-list"></i> 랭킹</button>
         <button class="btn btn-sm" style="white-space:nowrap" onclick="openIdealCupComments('${c.id}')"><i class="ti ti-message-circle"></i> 댓글</button>
+        ${isCreator?`<button class="btn btn-sm" style="flex:0 0 auto" onclick="openEditIdealCup('${c.id}')"><i class="ti ti-pencil"></i></button>`:''}
         ${canManage?`<button class="btn btn-sm btn-danger" style="flex:0 0 auto" onclick="deleteIdealCup('${c.id}')"><i class="ti ti-trash"></i></button>`:''}
       </div>
     </div>
@@ -2776,6 +2778,134 @@ window.saveIdealCupDraft = async function() {
     alert('임시저장 중 오류가 발생했습니다: ' + e.message);
   } finally {
     btn.disabled = false; btn.textContent = '임시저장';
+  }
+};
+
+// ── 이상형 월드컵 · 수정 (제작자 본인만) ───────────────────────────────
+let _icEditCupId = null;
+let _icEditLineups = [];
+let _icEditCounter = 0;
+
+window.openEditIdealCup = function(cupId) {
+  const cup = idealCups.find(c=>c.id===cupId);
+  if (!cup) return;
+  if (!currentUser || cup.creatorUid !== currentUser.uid) { alert('제작자 본인만 수정할 수 있습니다.'); return; }
+  _icEditCupId = cupId;
+  _icEditLineups = (cup.lineups||[]).map(l=>({
+    id: l.id, name: l.name, desc: l.desc||'', file: null,
+    youtubeUrl: l.youtubeUrl||'', imageUrl: l.imageUrl||'', previewUrl: l.imageUrl||null,
+    wins: l.wins||0, matches: l.matches||0, championCount: l.championCount||0
+  }));
+  _icEditCounter = 0;
+  _icUnsavedActive = true;
+  openModal(`<div class="modal-title">✏️ 이상형월드컵 수정</div>
+    <input type="text" id="ic-edit-title" placeholder="제목" value="${(cup.title||'').replace(/"/g,'&quot;')}" style="width:100%;margin-bottom:8px">
+    <textarea id="ic-edit-desc" placeholder="간단한 설명" style="width:100%;min-height:50px;margin-bottom:14px">${cup.description||''}</textarea>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:10px">⚠️ 라인업을 삭제하면 그동안 쌓인 투표 기록(승수/우승 횟수)도 함께 사라집니다.</div>
+    <div style="font-size:12px;font-weight:600;margin-bottom:6px">라인업 추가 <span id="ic-edit-lineup-count" style="color:var(--text2);font-weight:400">0개</span></div>
+    <div style="border:0.5px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:10px">
+      <input type="text" id="ic-edit-ln-name" placeholder="이름 (예: 유우리, 또는 김치찌개를 끓이는 티라노사우르스)" style="width:100%;margin-bottom:6px">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:4px">사진 첨부 / 이미지 링크 / 유튜브 링크 중 하나를 입력해주세요.</div>
+      <div class="flex" style="gap:6px;margin-bottom:6px;flex-wrap:wrap">
+        <input type="file" id="ic-edit-ln-file" accept="image/*" style="flex:1;min-width:120px;font-size:12px">
+        <input type="text" id="ic-edit-ln-imgurl" placeholder="이미지 링크 (URL)" style="flex:1;min-width:120px">
+        <input type="text" id="ic-edit-ln-yt" placeholder="유튜브 링크" style="flex:1;min-width:120px">
+      </div>
+      <button class="btn btn-sm" onclick="addIdealCupLineupEdit()"><i class="ti ti-plus"></i> 라인업에 추가</button>
+    </div>
+    <div id="ic-edit-lineup-list" style="max-height:200px;overflow-y:auto;border:0.5px solid var(--border);border-radius:var(--radius);padding:6px;margin-bottom:14px"></div>
+    <div class="flex" style="justify-content:flex-end;gap:8px">
+      <button class="btn" onclick="closeModal()">취소</button>
+      <button class="btn btn-primary" id="ic-edit-submit-btn" onclick="submitIdealCupEdit()">저장</button>
+    </div>`);
+  renderIdealCupEditList();
+};
+
+window.addIdealCupLineupEdit = function() {
+  const name = document.getElementById('ic-edit-ln-name').value.trim();
+  if (!name) { alert('라인업 이름을 입력해주세요.'); return; }
+  const fileInput = document.getElementById('ic-edit-ln-file');
+  const file = fileInput.files[0] || null;
+  const imgUrlRaw = document.getElementById('ic-edit-ln-imgurl').value.trim();
+  const ytRaw = document.getElementById('ic-edit-ln-yt').value.trim();
+  const filledCount = [file, imgUrlRaw, ytRaw].filter(Boolean).length;
+  if (filledCount > 1) { alert('사진 첨부 / 이미지 링크 / 유튜브 링크 중 하나만 입력해주세요.'); return; }
+  if (filledCount === 0) { alert('사진을 첨부하거나, 이미지 링크 또는 유튜브 링크를 입력해주세요.'); return; }
+  let youtubeUrl = '', imageUrl = '';
+  if (ytRaw) {
+    if (!getYoutubeId(ytRaw)) { alert('유효한 유튜브 링크가 아닙니다.'); return; }
+    youtubeUrl = ytRaw;
+  } else if (imgUrlRaw) {
+    if (!/^https?:\/\//i.test(imgUrlRaw)) { alert('유효한 이미지 링크(URL)가 아닙니다.'); return; }
+    imageUrl = imgUrlRaw;
+  }
+  const id = 'E' + Date.now() + '_' + (++_icEditCounter);
+  const previewUrl = file ? URL.createObjectURL(file) : (imageUrl || null);
+  _icEditLineups.push({ id, name, desc:'', file, youtubeUrl, imageUrl, previewUrl, wins:0, matches:0, championCount:0 });
+  document.getElementById('ic-edit-ln-name').value = '';
+  fileInput.value = '';
+  document.getElementById('ic-edit-ln-imgurl').value = '';
+  document.getElementById('ic-edit-ln-yt').value = '';
+  renderIdealCupEditList();
+};
+
+function renderIdealCupEditList() {
+  const el = document.getElementById('ic-edit-lineup-list');
+  if (!el) return;
+  el.innerHTML = _icEditLineups.length === 0
+    ? `<div style="font-size:12px;color:var(--text2)">라인업이 없습니다. 2개 이상 있어야 합니다.</div>`
+    : _icEditLineups.map((l,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px;border-bottom:0.5px solid var(--border)">
+        ${l.previewUrl
+          ? `<img src="${l.previewUrl}" style="width:36px;height:36px;border-radius:6px;object-fit:cover">`
+          : l.youtubeUrl
+            ? `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);display:flex;align-items:center;justify-content:center"><i class="ti ti-brand-youtube" style="font-size:16px;color:var(--text2)"></i></div>`
+            : `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);display:flex;align-items:center;justify-content:center"><i class="ti ti-photo-off" style="font-size:16px;color:var(--text2)"></i></div>`}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:500">${l.name}</div>
+          ${l.matches>0?`<div style="font-size:11px;color:var(--text2)">${l.matches}전 ${l.wins}승 · 우승 ${l.championCount}회</div>`:''}
+        </div>
+        <span style="cursor:pointer;color:var(--text2);padding:0 4px" onclick="removeIdealCupLineupEdit(${i})">×</span>
+      </div>`).join('');
+  const countEl = document.getElementById('ic-edit-lineup-count');
+  if (countEl) countEl.textContent = `${_icEditLineups.length}개`;
+}
+
+window.removeIdealCupLineupEdit = function(i) {
+  const l = _icEditLineups[i];
+  if (l.matches > 0) {
+    if (!confirm(`"${l.name}"은(는) 투표 기록이 있습니다. 삭제하면 해당 기록도 함께 사라집니다. 삭제할까요?`)) return;
+  }
+  _icEditLineups.splice(i, 1);
+  renderIdealCupEditList();
+};
+
+window.submitIdealCupEdit = async function() {
+  const title = document.getElementById('ic-edit-title').value.trim();
+  const description = document.getElementById('ic-edit-desc').value.trim();
+  if (!title) { alert('제목을 입력해주세요.'); return; }
+  if (_icEditLineups.length < 2) { alert('라인업은 2개 이상 있어야 합니다.'); return; }
+  const btn = document.getElementById('ic-edit-submit-btn');
+  btn.disabled = true;
+  try {
+    const lineups = [];
+    for (let i=0; i<_icEditLineups.length; i++) {
+      const l = _icEditLineups[i];
+      let imageUrl = l.imageUrl || '';
+      if (l.file) {
+        btn.textContent = `업로드 중... (${i+1}/${_icEditLineups.length})`;
+        const storageRef = ref(storage, `idealcups/${_icEditCupId}/${l.id}_${Date.now()}`);
+        await uploadBytes(storageRef, l.file);
+        imageUrl = await getDownloadURL(storageRef);
+      }
+      lineups.push({ id:l.id, name:l.name, desc:l.desc||'', imageUrl, youtubeUrl:l.youtubeUrl||'', wins:l.wins||0, matches:l.matches||0, championCount:l.championCount||0 });
+    }
+    await updateDoc(doc(db,'idealCups',_icEditCupId), { title, description, lineups });
+    _icUnsavedActive = false;
+    closeModal();
+    loadIdealCups();
+  } catch(e) {
+    alert('수정 중 오류가 발생했습니다: ' + e.message);
+    btn.disabled = false; btn.textContent = '저장';
   }
 };
 
@@ -3094,6 +3224,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v4.14.0',date:'2026.06.25',items:['이상형월드컵 카드에 "수정" 버튼 추가 — 제작자 본인만 제목/설명/라인업(추가·삭제)을 수정할 수 있음, 기존 라인업의 투표 기록(승수·우승 횟수)은 유지되며 라인업을 삭제하면 해당 기록도 함께 삭제된다는 안내 표시']},
   {version:'v4.13.1',date:'2026.06.25',items:['[버그 수정] 공지사항·게시판·댓글·이상형월드컵 댓글/제작자·롤링페이퍼·사이드바 등 앱 곳곳에 닉네임이 구글 계정 이름으로 표시되던 문제 수정 — 프로필이 연결된 회원은 항상 프로필 닉네임으로 표시되도록 통일','회원이 닉네임을 변경하면 과거에 작성한 글/댓글/롤링페이퍼에 표시되는 이름도 즉시 새 닉네임으로 함께 바뀌도록 변경 (작성 시점에 저장된 이름이 아니라 매번 최신 프로필 이름을 조회해서 표시)','사이드바 좌측 상단 사용자 표시명이 운영진 여부와 무관하게 항상 최신 프로필 닉네임으로 갱신되도록 수정 (기존에는 운영진 권한이 바뀔 때만 갱신되어 계속 구글 이름으로 남아있던 문제)']},
   {version:'v4.13.0',date:'2026.06.25',items:['이상형 월드컵 선택 애니메이션 방식을 변경 — 팝업 자체가 커지며 사진이 잘려 보이던 문제 해결 (영역 크기는 그대로 두고 사진만 확대/축소되는 방식으로 전환), 확대 후 화면을 보여주는 시간과 확대 애니메이션 속도를 살짤 늘림','이상형 월드컵 목록 카드의 썸네일 2장이 고정되지 않고 들어갈 때마다 라인업 중 무작위 2개로 표시되도록 변경','이상형 월드컵 강수 선택 옵션 개선 — 라인업 개수가 2의 거듭제곱이 아닐 때 무리하게 다음 거듭제곱(예: 37명에 64강)으로 건너뛰지 않고, 라인업 수에 맞는 가장 큰 짝수를 최대 옵션으로 제시 (예: 37명 → 4·8·16·32·36강, 41명 → 4·8·16·32·40강). 진행 중 인원이 홀수가 되는 라운드는 자동으로 한 명을 부전승 처리']},
   {version:'v4.12.0',date:'2026.06.25',items:['이상형 월드컵 플레이 화면에 선택 애니메이션 추가 — 후보 선택 시 고른 쪽이 화면을 가득 채우듯 커지고 반대쪽은 사라지는 모션 후 다음 대진으로 자동 전환 (사진/유튜브 영상 매치 모두 동일하게 적용)']},
