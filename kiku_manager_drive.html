@@ -307,7 +307,8 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
       <div>
         <div class="flex-between mb-2">
           <h3 style="margin-bottom:0">유령 판정 목록</h3>
-          <div class="flex">
+          <div class="flex" style="align-items:center">
+            <select id="ghost-period-select" onchange="onGhostPeriodChange(this.value)" style="padding:5px 10px;font-size:13px"></select>
             <span class="text-sm text-secondary" id="ghost-calc-info"></span>
             <button class="btn btn-info btn-sm" onclick="openGhostMessage()"><i class="ti ti-message"></i>퇴출 메시지 생성</button>
             <button class="btn btn-danger btn-sm edit-only" id="reset-btn" onclick="confirmReset()" style="display:none"><i class="ti ti-refresh"></i>초기화 실행</button>
@@ -565,6 +566,23 @@ function isCalcDay(){
   const cd=getCalcDate();
   return TODAY.getDate()===cd.getDate()&&TODAY.getMonth()===cd.getMonth()&&TODAY.getFullYear()===cd.getFullYear();
 }
+// 유령 정리 탭 전용 기산일 탐색: offset 0 = 이번(가장 최근에 도래한) 정리 주기,
+// offset -1 = 다음 정리 예정(미리보기), offset 1,2,3... = 그 이전 지난 주기들.
+// getCalcDate()와 달리 기산일이 지나도 "이번 주기"가 미래로 튀지 않아 지난 주기 조회가 가능하다.
+function getGhostCycleDate(offset){
+  const y=TODAY.getFullYear(),m=TODAY.getMonth()+1;
+  const baseEvenMonth=m%2===0?m:m-1;
+  const idx=(y*12+(baseEvenMonth-1))-offset*2;
+  return new Date(Math.floor(idx/12),((idx%12)+12)%12,1);
+}
+function getGhostCycleOptions(){
+  const opts=[{offset:-1,label:`다음 정리 예정 — ${formatDate(getGhostCycleDate(-1))} (미리보기)`}];
+  for(let i=0;i<=11;i++){
+    opts.push({offset:i,label:(i===0?'이번 정리 — ':'지난 정리 — ')+formatDate(getGhostCycleDate(i))});
+  }
+  return opts;
+}
+let ghostSelectedOffset=0;
 function formatDate(d){
   if(!d)return '-';
   const dt=typeof d==='string'?new Date(d):d;
@@ -973,16 +991,25 @@ function renderBungs(){
 }
 
 function renderGhost(){
-  const cd=getCalcDate();
+  const selEl=document.getElementById('ghost-period-select');
+  if(selEl)selEl.innerHTML=getGhostCycleOptions().map(o=>`<option value="${o.offset}" ${o.offset===ghostSelectedOffset?'selected':''}>${o.label}</option>`).join('');
+  const cd=getGhostCycleDate(ghostSelectedOffset);
+  const isExactlyToday=TODAY.getDate()===cd.getDate()&&TODAY.getMonth()===cd.getMonth()&&TODAY.getFullYear()===cd.getFullYear();
+  const isCurrentCycle=ghostSelectedOffset===0;
   const twoMonthsAgo=new Date(cd);
   twoMonthsAgo.setMonth(twoMonthsAgo.getMonth()-2);
   document.getElementById('ghost-calc-info').textContent=`기산일: ${formatDate(cd)} | 대상 기간: ${formatDate(twoMonthsAgo)} ~ ${formatDate(cd)}`;
   let alertHtml='';
-  if(isCalcDay()){
-    alertHtml=`<div class="alert alert-danger"><i class="ti ti-alert-triangle"></i><div><strong>오늘이 정리일입니다.</strong> 목록 확인 후 조치 완료 시 초기화를 실행하세요.</div></div>`;
+  if(ghostSelectedOffset===-1){
+    alertHtml=`<div class="alert alert-info"><i class="ti ti-clock"></i>다음 정리일까지 <strong>${daysBetween(TODAY,cd)}일</strong> 남았습니다. 현재는 미리보기 상태입니다.</div>`;
+    document.getElementById('reset-btn').style.display='none';
+  } else if(isCurrentCycle){
+    alertHtml=isExactlyToday
+      ? `<div class="alert alert-danger"><i class="ti ti-alert-triangle"></i><div><strong>오늘이 정리일입니다.</strong> 목록 확인 후 조치 완료 시 초기화를 실행하세요.</div></div>`
+      : `<div class="alert alert-danger"><i class="ti ti-alert-triangle"></i><div><strong>이번 정리 주기입니다 (기산일 ${formatDate(cd)}).</strong> 목록 확인 후 조치 완료 시 초기화를 실행하세요.</div></div>`;
     document.getElementById('reset-btn').style.display='';
   } else {
-    alertHtml=`<div class="alert alert-info"><i class="ti ti-clock"></i>다음 정리일까지 <strong>${daysBetween(TODAY,cd)}일</strong> 남았습니다. 현재는 미리보기 상태입니다.</div>`;
+    alertHtml=`<div class="alert alert-info"><i class="ti ti-history"></i>지난 정리 주기(기산일 ${formatDate(cd)})를 조회 중입니다. 참고용입니다.</div>`;
     document.getElementById('reset-btn').style.display='none';
   }
   document.getElementById('ghost-alert-area').innerHTML=alertHtml;
@@ -1013,9 +1040,13 @@ function renderGhost(){
   }
   document.getElementById('ghost-table-area').innerHTML=html;
 }
+function onGhostPeriodChange(v){
+  ghostSelectedOffset=parseInt(v,10);
+  renderGhost();
+}
 
 function openGhostMessage(){
-  const cd=getCalcDate();
+  const cd=getGhostCycleDate(ghostSelectedOffset);
   const ghosts=members.filter(m=>getMemberStatus(m,cd)==='ghost');
   if(ghosts.length===0){
     openModal(`<div class="modal-title">퇴출 메시지 생성</div>
@@ -1844,6 +1875,7 @@ function renderMemberProfile(id){
 }
 
 const UPDATES=[
+  {version:'v1.8',date:'2026.08.03',items:['유령 정리 탭에 정리 주기 선택 드롭다운 추가 — 기산일이 지나면 이전 두 달 판정 기준을 더 이상 볼 수 없던 문제 수정, 이번 정리 주기가 지난 뒤에도(다음 짝수 달 1일 전까지) 목록 조회·초기화가 계속 가능하며 최근 12회분의 지난 정리 주기와 다음 정리 예정도 조회 가능']},
   {version:'v1.7',date:'2026.06.17',items:['캘린더 탭 추가 — 월별 달력으로 벙 일정 시각화, 벙 클릭 시 상세 팝업','회원 프로필 탭 추가 — 회원 카드 그리드, 개인 상세 페이지 (참여율/연속참석/벙주/업적/참석벙 목록/월별 그래프)']},
   {version:'v1.6',date:'2026.06.17',items:['명예의 전당 대폭 강화 — 연속 참석 스트릭 랭킹, 벙주 랭킹, 월별 MVP 히스토리 추가','이달의 벙주 카드 아바타 디자인 개선']},
   {version:'v1.5',date:'2026.06.17',items:['대시보드 오른쪽 하단 패널 추가 — 이달의 MVP, 신규 회원, 다가오는 기념일, 업적 현황 피드']},
