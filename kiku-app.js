@@ -1109,6 +1109,23 @@ function isCalcDay() {
   const cd = getCalcDate();
   return TODAY.getDate()===cd.getDate() && TODAY.getMonth()===cd.getMonth() && TODAY.getFullYear()===cd.getFullYear();
 }
+// 유령 정리 탭 전용 기산일 탐색: offset 0 = 이번(가장 최근에 도래한) 정리 주기,
+// offset -1 = 다음 정리 예정(미리보기), offset 1,2,3... = 그 이전 지난 주기들.
+// getCalcDate()와 달리 기산일이 지나도 "이번 주기"가 미래로 튀지 않아 지난 주기 조회가 가능하다.
+function getGhostCycleDate(offset) {
+  const y = TODAY.getFullYear(), m = TODAY.getMonth()+1;
+  const baseEvenMonth = m%2===0 ? m : m-1;
+  const idx = (y*12 + (baseEvenMonth-1)) - offset*2;
+  return new Date(Math.floor(idx/12), ((idx%12)+12)%12, 1);
+}
+function getGhostCycleOptions() {
+  const opts = [{offset:-1, label:`다음 정리 예정 — ${formatDate(getGhostCycleDate(-1))} (미리보기)`}];
+  for (let i=0;i<=11;i++) {
+    opts.push({offset:i, label:(i===0?'이번 정리 — ':'지난 정리 — ')+formatDate(getGhostCycleDate(i))});
+  }
+  return opts;
+}
+let ghostSelectedOffset = 0;
 function getYoutubeId(url) {
   if (!url) return null;
   const m = url.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
@@ -1820,17 +1837,25 @@ function renderBungs() {
 }
 
 function renderGhost() {
-  const cd = getCalcDate();
+  const selEl = document.getElementById('ghost-period-select');
+  if (selEl) selEl.innerHTML = getGhostCycleOptions().map(o=>`<option value="${o.offset}" ${o.offset===ghostSelectedOffset?'selected':''}>${o.label}</option>`).join('');
+  const cd = getGhostCycleDate(ghostSelectedOffset);
+  const isExactlyToday = TODAY.getDate()===cd.getDate() && TODAY.getMonth()===cd.getMonth() && TODAY.getFullYear()===cd.getFullYear();
+  const isCurrentCycle = ghostSelectedOffset===0;
   const twoMonthsAgo = new Date(cd);
   twoMonthsAgo.setMonth(twoMonthsAgo.getMonth()-2);
   const gcEl = document.getElementById('ghost-calc-info');
   if (gcEl) gcEl.textContent = `기산일: ${formatDate(cd)} | 대상: ${formatDate(twoMonthsAgo)} ~ ${formatDate(cd)}`;
   const resetBtn = document.getElementById('reset-btn');
   const alertEl = document.getElementById('ghost-alert-area');
-  if (alertEl) alertEl.innerHTML = isCalcDay()
-    ? `<div class="alert alert-danger"><i class="ti ti-alert-triangle"></i><div><strong>오늘이 정리일입니다.</strong> 목록 확인 후 조치 완료 시 초기화를 실행하세요.</div></div>`
-    : `<div class="alert alert-info"><i class="ti ti-clock"></i>다음 정리일까지 <strong>${daysBetween(TODAY,cd)}일</strong> 남았습니다. 현재는 미리보기입니다.</div>`;
-  if (resetBtn) resetBtn.style.display = isCalcDay() ? '' : 'none';
+  if (alertEl) alertEl.innerHTML = ghostSelectedOffset===-1
+    ? `<div class="alert alert-info"><i class="ti ti-clock"></i>다음 정리일까지 <strong>${daysBetween(TODAY,cd)}일</strong> 남았습니다. 현재는 미리보기입니다.</div>`
+    : isCurrentCycle
+      ? (isExactlyToday
+          ? `<div class="alert alert-danger"><i class="ti ti-alert-triangle"></i><div><strong>오늘이 정리일입니다.</strong> 목록 확인 후 조치 완료 시 초기화를 실행하세요.</div></div>`
+          : `<div class="alert alert-danger"><i class="ti ti-alert-triangle"></i><div><strong>이번 정리 주기입니다 (기산일 ${formatDate(cd)}).</strong> 목록 확인 후 조치 완료 시 초기화를 실행하세요.</div></div>`)
+      : `<div class="alert alert-info"><i class="ti ti-history"></i>지난 정리 주기(기산일 ${formatDate(cd)})를 조회 중입니다. 참고용입니다.</div>`;
+  if (resetBtn) resetBtn.style.display = isCurrentCycle ? '' : 'none';
   const ghostList = members.filter(m=>getMemberStatus(m,cd)==='ghost');
   const warnList = members.filter(m=>getMemberStatus(m,cd)==='contacted');
   const tableEl = document.getElementById('ghost-table-area');
@@ -1860,6 +1885,10 @@ function renderGhost() {
   }
   tableEl.innerHTML = html;
 }
+window.onGhostPeriodChange = function(v) {
+  ghostSelectedOffset = parseInt(v, 10);
+  renderGhost();
+};
 
 function renderStats() {
   const el = document.getElementById('stats-content');
@@ -3224,6 +3253,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v4.15.0',date:'2026.08.03',items:['유령 정리 탭에 정리 주기 선택 드롭다운 추가 — 기산일이 지나면 이전 두 달 판정 기준을 더 이상 볼 수 없던 문제 수정, 이번 정리 주기가 지난 뒤에도(다음 짝수 달 1일 전까지) 목록 조회·초기화가 계속 가능하며 최근 12회분의 지난 정리 주기와 다음 정리 예정도 조회 가능']},
   {version:'v4.14.0',date:'2026.06.25',items:['이상형월드컵 카드에 "수정" 버튼 추가 — 제작자 본인만 제목/설명/라인업(추가·삭제)을 수정할 수 있음, 기존 라인업의 투표 기록(승수·우승 횟수)은 유지되며 라인업을 삭제하면 해당 기록도 함께 삭제된다는 안내 표시']},
   {version:'v4.13.1',date:'2026.06.25',items:['[버그 수정] 공지사항·게시판·댓글·이상형월드컵 댓글/제작자·롤링페이퍼·사이드바 등 앱 곳곳에 닉네임이 구글 계정 이름으로 표시되던 문제 수정 — 프로필이 연결된 회원은 항상 프로필 닉네임으로 표시되도록 통일','회원이 닉네임을 변경하면 과거에 작성한 글/댓글/롤링페이퍼에 표시되는 이름도 즉시 새 닉네임으로 함께 바뀌도록 변경 (작성 시점에 저장된 이름이 아니라 매번 최신 프로필 이름을 조회해서 표시)','사이드바 좌측 상단 사용자 표시명이 운영진 여부와 무관하게 항상 최신 프로필 닉네임으로 갱신되도록 수정 (기존에는 운영진 권한이 바뀔 때만 갱신되어 계속 구글 이름으로 남아있던 문제)']},
   {version:'v4.13.0',date:'2026.06.25',items:['이상형 월드컵 선택 애니메이션 방식을 변경 — 팝업 자체가 커지며 사진이 잘려 보이던 문제 해결 (영역 크기는 그대로 두고 사진만 확대/축소되는 방식으로 전환), 확대 후 화면을 보여주는 시간과 확대 애니메이션 속도를 살짤 늘림','이상형 월드컵 목록 카드의 썸네일 2장이 고정되지 않고 들어갈 때마다 라인업 중 무작위 2개로 표시되도록 변경','이상형 월드컵 강수 선택 옵션 개선 — 라인업 개수가 2의 거듭제곱이 아닐 때 무리하게 다음 거듭제곱(예: 37명에 64강)으로 건너뛰지 않고, 라인업 수에 맞는 가장 큰 짝수를 최대 옵션으로 제시 (예: 37명 → 4·8·16·32·36강, 41명 → 4·8·16·32·40강). 진행 중 인원이 홀수가 되는 라운드는 자동으로 한 명을 부전승 처리']},
@@ -3687,7 +3717,7 @@ window.copyRecapText = function() {
 };
 
 window.openGhostMessage = function() {
-  const cd=getCalcDate();
+  const cd=getGhostCycleDate(ghostSelectedOffset);
   const ghosts=members.filter(m=>getMemberStatus(m,cd)==='ghost');
   if(ghosts.length===0){openModal(`<div class="modal-title">퇴출 메시지</div><div class="alert alert-success"><i class="ti ti-check"></i>퇴출 대상자가 없습니다.</div><div class="flex" style="justify-content:flex-end"><button class="btn btn-primary" onclick="closeModal()">확인</button></div>`);return;}
   const nameList=ghosts.map(m=>`• ${m.name}`).join('\n');

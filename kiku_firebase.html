@@ -328,7 +328,8 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
         </div>
         <div class="flex-between mb-2">
           <h3 style="margin-bottom:0">유령 판정 목록</h3>
-          <div class="flex" style="flex-wrap:wrap">
+          <div class="flex" style="flex-wrap:wrap;align-items:center">
+            <select id="ghost-period-select" onchange="onGhostPeriodChange(this.value)" style="padding:5px 10px;font-size:13px"></select>
             <span class="text-sm text-secondary" id="ghost-calc-info"></span>
             <button class="btn btn-info btn-sm edit-only" onclick="openGhostMessage()"><i class="ti ti-message"></i>퇴출 메시지</button>
             <button class="btn btn-danger btn-sm edit-only" id="reset-btn" onclick="confirmReset()" style="display:none"><i class="ti ti-refresh"></i>초기화</button>
