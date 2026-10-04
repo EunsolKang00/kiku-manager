@@ -30,6 +30,120 @@ let nextMemberId = 1, nextBungId = 1;
 let calYear = TODAY.getFullYear(), calMonth = TODAY.getMonth();
 let selectedMemberId = null;
 let unsubscribers = [];
+// 사이드바 버튼 순서와 동일해야 함 (switchTab에서 인덱스로 매칭)
+const TABS = ['dashboard','notice','board','settlement','members','bung','ghost','stats','hall','playground','calendar','profile','gallery','updates'];
+let currentTab = 'dashboard';
+
+// ── 공통 헬퍼 ─────────────────────────────────────────────────────
+// 사용자가 입력한 글(이름·제목·메모 등)을 innerHTML에 넣기 전에 반드시 거치는 이스케이프.
+// 게시글 제목 등에 <script>/<img onerror> 같은 HTML이 섞여 들어가 실행되는 것을 막는다.
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+// onclick="fn(...)" 같은 인라인 핸들러에 문자열 인자를 넣을 때 사용 (따옴표가 들어간 이름도 안전)
+function jsArg(s) { return esc(JSON.stringify(String(s ?? ''))); }
+
+// 날짜는 항상 "기기 현지 날짜" 기준 YYYY-MM-DD 문자열로 다룬다.
+// (toISOString은 UTC 기준이라 한국 시간 오전 9시 전에는 어제 날짜가 나옴)
+function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function todayStr() { return toDateStr(TODAY); }
+function parseDateStr(s) { const [y,m,d] = String(s).split('-').map(Number); return new Date(y, (m||1)-1, d||1); }
+function daysUntil(dateStr) { return Math.round((parseDateStr(dateStr) - parseDateStr(todayStr())) / 86400000); }
+
+// 이름 비교용 정규화: 대소문자·띄어쓰기 무시 (Hyeon = hyeon = HYEON, "고 의석" = "고의석")
+function normName(s) { return String(s ?? '').normalize('NFC').toLowerCase().replace(/\s+/g, ''); }
+function memberAliases(m) { return Array.isArray(m?.aliases) ? m.aliases.filter(Boolean) : []; }
+function memberKeys(m) { return [m.name, ...memberAliases(m)].map(normName).filter(Boolean); }
+function memberMatchesQuery(m, q) {
+  const key = normName(q);
+  return !key || memberKeys(m).some(k => k.includes(key));
+}
+function sortMembersByName(list) { return [...list].sort((a,b) => (a.name||'').localeCompare(b.name||'', 'ko')); }
+// 입력한 이름/별명으로 회원 찾기. 1) 이름 정확히 일치 2) 별명 정확히 일치
+// 3) (2글자 이상일 때) 이름·별명에 포함되는 회원이 딱 1명이면 그 회원.
+// 결과: {member} 이거나, 후보가 여러 명이면 {candidates}, 없으면 {}
+function resolveMemberInput(q) {
+  const key = normName(q);
+  if (!key) return {};
+  const byName = members.filter(m => normName(m.name) === key);
+  if (byName.length === 1) return {member: byName[0]};
+  if (byName.length > 1) return {candidates: byName};
+  const byAlias = members.filter(m => memberAliases(m).some(a => normName(a) === key));
+  if (byAlias.length === 1) return {member: byAlias[0]};
+  if (byAlias.length > 1) return {candidates: byAlias};
+  if ([...key].length < 2) return {};
+  const partial = members.filter(m => memberKeys(m).some(k => k.includes(key)));
+  if (partial.length === 1) return {member: partial[0]};
+  if (partial.length > 1) return {candidates: partial};
+  return {};
+}
+function parseAliasInput(str, ownName) {
+  const own = normName(ownName);
+  const seen = new Set();
+  return String(str ?? '').split(/[,，、\n]+/).map(s => s.trim()).filter(s => {
+    const k = normName(s);
+    if (!k || k === own || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).slice(0, 10);
+}
+// 다른 회원 이름/별명과 겹치는 별명 찾기 (겹치면 입력할 때 누구인지 헷갈리므로 저장 전에 알려줌)
+function findAliasConflicts(aliases, selfId) {
+  const out = [];
+  aliases.forEach(a => {
+    const k = normName(a);
+    members.forEach(m => { if (m.id !== selfId && memberKeys(m).includes(k)) out.push(`"${a}" ↔ ${m.name}`); });
+  });
+  return out;
+}
+
+// 한글 입력(IME) 중 엔터를 누르면 마지막 글자가 입력칸에 남거나 두 번 실행되는 문제를 피하는 엔터 처리
+function onEnterKey(e, fn) {
+  if (e.key !== 'Enter' || e.shiftKey) return;
+  e.preventDefault();
+  if (e.isComposing) {
+    // 조합이 끝난 뒤 실행 (compositionend가 오지 않는 키보드도 있어서 잠시 후 한 번 더 시도, 실행은 한 번만)
+    let fired = false;
+    const run = () => { if (!fired) { fired = true; setTimeout(fn, 0); } };
+    e.target.addEventListener('compositionend', run, {once: true});
+    setTimeout(run, 300);
+    return;
+  }
+  fn();
+}
+window.onEnterKey = onEnterKey;
+
+// 화면 하단에 잠깐 떴다 사라지는 알림
+function toast(msg, type = 'success') {
+  let wrap = document.getElementById('toast-wrap');
+  if (!wrap) { wrap = document.createElement('div'); wrap.id = 'toast-wrap'; document.body.appendChild(wrap); }
+  const icon = type === 'error' ? 'alert-circle' : type === 'info' ? 'info-circle' : 'circle-check';
+  const t = document.createElement('div');
+  t.className = 'toast toast-' + type;
+  t.setAttribute('role', 'status');
+  t.innerHTML = `<i class="ti ti-${icon}"></i><span>${esc(msg)}</span>`;
+  wrap.appendChild(t);
+  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 260); }, type === 'error' ? 3200 : 2200);
+}
+
+// 저장 버튼을 빠르게 두 번 눌러 같은 데이터가 두 번 저장되는 것을 막는다.
+// 처리 중에는 누른 버튼을 잠깐 비활성화(로딩 표시)하고, 끝나면 원래대로 돌린다.
+const _busyActions = new Set();
+function guardAction(name) {
+  const fn = window[name];
+  window[name] = async function(...args) {
+    if (_busyActions.has(name)) return;
+    const btn = window.event?.target?.closest?.('button');
+    _busyActions.add(name);
+    if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+    try { return await fn.apply(this, args); }
+    catch (e) { console.error(e); toast('처리 중 오류가 발생했습니다: ' + (e.message || e), 'error'); }
+    finally {
+      _busyActions.delete(name);
+      if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('is-busy'); }
+    }
+  };
+}
 
 window.signInWithGoogle = async function() {
   const agreeEl = document.getElementById('terms-agree');
@@ -81,7 +195,15 @@ window.enterAsGuest = function() {
   updateEditMode();
   initTheme();
   loadData();
+  restoreTabFromHash();
 };
+
+function hideBootSplash() {
+  const el = document.getElementById('boot-splash');
+  if (!el || el.classList.contains('hide')) return;
+  el.classList.add('hide');
+  setTimeout(() => el.remove(), 400);
+}
 
 window.exitGuestMode = function() {
   unsubscribers.forEach(u => u());
@@ -109,6 +231,8 @@ function resetAuthActionBtn() {
   authBtn.setAttribute('onclick', 'signOut()');
 }
 
+initTheme();
+
 onAuthStateChanged(auth, async user => {
   try {
     await getRedirectResult(auth);
@@ -116,6 +240,7 @@ onAuthStateChanged(auth, async user => {
     const statusEl = document.getElementById('login-status');
     if (statusEl) statusEl.textContent = '로그인 실패: ' + e.message + ' (' + (e.code||'') + ')';
   }
+  hideBootSplash();
   if (user) {
     currentUser = user;
     isAdmin = ADMIN_EMAILS.includes(user.email);
@@ -126,6 +251,7 @@ onAuthStateChanged(auth, async user => {
     updateEditMode();
     initTheme();
     await loadData();
+    restoreTabFromHash();
     setTimeout(checkProfileLink, 600);
   } else {
     currentUser = null;
@@ -139,7 +265,7 @@ function updateSidebarUserDisplay() {
   const sidebarUser = document.getElementById('sidebar-user');
   if (!sidebarUser || !currentUser) return;
   const name = authorDisplayName();
-  sidebarUser.innerHTML = `<i class="ti ti-user" style="font-size:12px"></i>${name}${isAdmin?'<span style="font-size:10px;background:var(--warn-bg);color:var(--warn);padding:1px 5px;border-radius:3px;margin-left:4px">운영진</span>':''}`;
+  sidebarUser.innerHTML = `<i class="ti ti-user" style="font-size:12px"></i>${esc(name)}${isAdmin?'<span style="font-size:10px;background:var(--warn-bg);color:var(--warn);padding:1px 5px;border-radius:3px;margin-left:4px">운영진</span>':''}`;
 }
 
 function refreshAdminStatus() {
@@ -152,6 +278,8 @@ function refreshAdminStatus() {
 
 async function loadData() {
   setSyncStatus('loading', '데이터 불러오는 중...');
+  // 실시간 연결이 끊기거나 권한 오류가 나면 상단 상태 표시줄에 알려줌 (예전에는 조용히 멈춤)
+  const onSnapError = e => setSyncStatus('disconnected', '연결 오류: ' + (e?.message || e) + ' — 새로고침해주세요');
   try {
     const memberUnsub = onSnapshot(collection(db, 'members'), snap => {
       members = snap.docs.map(d => ({id: d.id, ...d.data()}));
@@ -159,12 +287,12 @@ async function loadData() {
       refreshAdminStatus();
       renderAll();
       checkAndFinalizeSeasonAwards();
-    });
+    }, onSnapError);
     const bungUnsub = onSnapshot(query(collection(db, 'bungs'), orderBy('date', 'desc')), snap => {
       bungs = snap.docs.map(d => ({id: d.id, ...d.data()}));
       nextBungId = bungs.length > 0 ? Math.max(...bungs.map(b => parseInt(b.numId)||0)) + 1 : 1;
       renderAll();
-    });
+    }, onSnapError);
     const noticeUnsub = onSnapshot(query(collection(db, 'notices'), orderBy('createdAt', 'desc')), snap => {
       notices = snap.docs.map(d => ({id: d.id, ...d.data()}));
       renderNotices();
@@ -185,7 +313,11 @@ async function loadData() {
       renderDashboardAchievements();
       checkAndFinalizeSeasonAwards();
     });
-    unsubscribers = [memberUnsub, bungUnsub, noticeUnsub, postUnsub, playlistUnsub, seasonAwardUnsub];
+    // 유령 정리 완료 기록 (다른 운영진이 정리를 마치면 내 화면도 다음 정리 기준으로 바뀜). 권한이 없으면 무시.
+    const ghostDoneUnsub = onSnapshot(doc(db, 'settings', 'ghostCleanup'), snap => {
+      if (snap.exists() && rememberGhostDoneCycle(snap.data().doneCycle)) renderAll();
+    }, () => {});
+    unsubscribers = [memberUnsub, bungUnsub, noticeUnsub, postUnsub, playlistUnsub, seasonAwardUnsub, ghostDoneUnsub];
     setSyncStatus('connected', '실시간 동기화 중');
   } catch(e) {
     setSyncStatus('disconnected', '연결 실패: ' + e.message);
@@ -197,8 +329,11 @@ function setSyncStatus(state, msg) {
   document.getElementById('sync-status').textContent = msg;
 }
 
-window.exportBackup = function() {
-  const data = {members, bungs, notices, exportedAt: new Date().toISOString()};
+window.exportBackup = async function() {
+  // 화면에 로드된 데이터 + 정산 내역까지 함께 백업
+  let settlements = [];
+  try { settlements = (await getDocs(collection(db, 'settlements'))).docs.map(d => ({id: d.id, ...d.data()})); } catch(e) {}
+  const data = {members, bungs, notices, posts, playlist, seasonAwards, settlements, exportedAt: new Date().toISOString()};
   const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -207,12 +342,21 @@ window.exportBackup = function() {
   a.download = `kiku_backup_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`;
   a.click();
   URL.revokeObjectURL(url);
+  toast('백업 파일을 저장했어요');
 };
 
+// 공지 빨간 점: 마지막으로 공지 탭을 본 이후 새 공지가 있을 때만 표시
+function latestNoticeSeconds() { return notices.reduce((mx, n) => Math.max(mx, n.createdAt?.seconds || 0), 0); }
+function markNoticesSeen() {
+  try { localStorage.setItem('kiku-notice-seen', String(latestNoticeSeconds())); } catch(e) {}
+}
 function updateNoticeDot() {
   const dot = document.getElementById('notice-dot');
   if (!dot) return;
-  dot.style.display = notices.length > 0 ? '' : 'none';
+  if (currentTab === 'notice') markNoticesSeen();
+  let seen = 0;
+  try { seen = parseInt(localStorage.getItem('kiku-notice-seen') || '0', 10) || 0; } catch(e) {}
+  dot.style.display = notices.some(n => (n.createdAt?.seconds || 0) > seen) ? '' : 'none';
 }
 
 function renderNotices() {
@@ -233,15 +377,15 @@ function renderNotices() {
       <div class="flex-between mb-1">
         <div class="flex" style="min-width:0;flex:1">
           <span class="notice-tag ${tagClass}" style="flex-shrink:0">${tagLabel}</span>
-          <strong style="font-size:14px">${n.title}</strong>
+          <strong style="font-size:14px">${esc(n.title)}</strong>
         </div>
         <div class="flex" style="gap:4px;flex-shrink:0">
           ${isAdmin ? `<button class="btn btn-sm edit-only" onclick="event.stopPropagation();openEditNotice('${n.id}')"><i class="ti ti-edit"></i></button>
           <button class="btn btn-sm btn-danger edit-only" onclick="event.stopPropagation();deleteNotice('${n.id}')"><i class="ti ti-trash"></i></button>` : ''}
         </div>
       </div>
-      <div style="font-size:13px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px">${n.content}</div>
-      <div style="font-size:11px;color:var(--text3)">${resolveAuthorName(n.authorUid, n.authorName) || '운영진'} · ${formatDate(date)}</div>
+      <div style="font-size:13px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px">${esc(n.content)}</div>
+      <div style="font-size:11px;color:var(--text3)">${esc(resolveAuthorName(n.authorUid, n.authorName) || '운영진')} · ${formatDate(date)}</div>
     </div>`;
   }).join('');
 }
@@ -250,8 +394,8 @@ window.openNoticeDetail = function(id) {
   const n = notices.find(x => x.id === id);
   if (!n) return;
   const date = n.createdAt ? new Date(n.createdAt.seconds * 1000) : new Date();
-  openModal(`<div class="modal-title">${n.pinned ? '📌 ' : ''}${n.title}</div>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">${resolveAuthorName(n.authorUid, n.authorName) || '운영진'} · ${formatDate(date)}</div>
+  openModal(`<div class="modal-title">${n.pinned ? '📌 ' : ''}${esc(n.title)}</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">${esc(resolveAuthorName(n.authorUid, n.authorName) || '운영진')} · ${formatDate(date)}</div>
     <div style="font-size:13px;line-height:1.8;margin-bottom:16px">${renderClampedText(n.content, 500)}</div>
     <div class="flex" style="justify-content:flex-end"><button class="btn btn-primary" onclick="closeModal()">닫기</button></div>`);
 };
@@ -281,14 +425,15 @@ window.addNotice = async function() {
     createdAt: serverTimestamp(),
   });
   closeModal();
+  toast('공지를 등록했어요');
 };
 
 window.openEditNotice = function(id) {
   const n = notices.find(x => x.id === id);
   if (!n) return;
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>공지 수정</div>
-    <div class="form-group"><label>제목</label><input type="text" id="en-title" value="${n.title}"></div>
-    <div class="form-group"><label>내용</label><textarea id="en-content" style="min-height:120px">${n.content}</textarea></div>
+    <div class="form-group"><label>제목</label><input type="text" id="en-title" value="${esc(n.title)}"></div>
+    <div class="form-group"><label>내용</label><textarea id="en-content" style="min-height:120px">${esc(n.content)}</textarea></div>
     <div class="flex" style="gap:16px;margin-bottom:12px">
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="en-pinned" ${n.pinned?'checked':''}> 상단 고정</label>
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="en-important" ${n.important?'checked':''}> 중요 표시</label>
@@ -306,6 +451,7 @@ window.editNotice = async function(id) {
     important: document.getElementById('en-important').checked,
   });
   closeModal();
+  toast('공지를 수정했어요');
 };
 
 window.deleteNotice = async function(id) {
@@ -388,7 +534,7 @@ function renderEditPostImagePreview() {
   const el = document.getElementById('ep-image-preview');
   if (!el) return;
   const existingHtml = editPostExistingImages.map((url,i) => `<div style="position:relative">
-    <img src="${url}" style="width:60px;height:60px;object-fit:cover;border-radius:var(--radius)">
+    <img src="${esc(url)}" style="width:60px;height:60px;object-fit:cover;border-radius:var(--radius)">
     <span style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="removeEditPostImage(${i},true)">×</span>
   </div>`).join('');
   const newHtml = editPostImageFiles.map((f,i) => `<div style="position:relative">
@@ -433,7 +579,7 @@ function renderPostBodyWithImages(content, images) {
     } else {
       const imgIdx = parseInt(parts[i]) - 1;
       const url = (images||[])[imgIdx];
-      if (url) html += `<img src="${url}" style="max-width:100%;border-radius:var(--radius-lg);margin:10px 0;display:block">`;
+      if (url) html += `<img src="${esc(url)}" style="max-width:100%;border-radius:var(--radius-lg);margin:10px 0;display:block" loading="lazy">`;
     }
   }
   return html;
@@ -476,8 +622,8 @@ function renderBoardList() {
     const date = p.createdAt ? new Date(p.createdAt.seconds * 1000) : new Date();
     const displayName = p.anonymous ? '익명' : resolveAuthorName(p.authorUid, p.authorName);
     const canManage = isAdmin || (currentUser && p.authorUid === currentUser.uid);
-    const titleHtml = p.type === 'song' ? `<i class="ti ti-music" style="color:var(--purple);margin-right:4px"></i>${p.title}` : p.title;
-    const previewText = (p.content||'').replace(/\[이미지\d+\]/g, '📷 ').trim();
+    const titleHtml = p.type === 'song' ? `<i class="ti ti-music" style="color:var(--purple);margin-right:4px"></i>${esc(p.title)}` : esc(p.title);
+    const previewText = esc((p.content||'').replace(/\[이미지\d+\]/g, '📷 ').trim());
     return `<div class="notice-card" onclick="openPostDetail('${p.id}')">
       <div class="flex-between mb-1">
         <strong style="font-size:14px;min-width:0">${titleHtml}</strong>
@@ -488,7 +634,7 @@ function renderBoardList() {
       </div>
       <div style="font-size:13px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px">${previewText}${p.images&&p.images.length>0?` <span style="color:var(--text3);font-size:11px">(사진 ${p.images.length}장)</span>`:''}</div>
       <div style="font-size:11px;color:var(--text3);display:flex;gap:8px;align-items:center">
-        <span>${displayName} · ${formatDate(date)}</span>
+        <span>${esc(displayName)} · ${formatDate(date)}</span>
         <span><i class="ti ti-message-circle" style="font-size:11px;vertical-align:-1px"></i> ${p.commentCount||0}</span>
       </div>
     </div>`;
@@ -580,6 +726,7 @@ window.addPost = async function() {
   await addDoc(collection(db, 'posts'), data);
   postImageFiles = [];
   closeModal();
+  toast(isSong ? '노래를 추천했어요 🎵' : '글을 등록했어요');
 };
 
 window.openEditPost = function(id) {
@@ -588,8 +735,8 @@ window.openEditPost = function(id) {
   editPostExistingImages = [...(p.images||[])];
   editPostImageFiles = [];
   openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>글 수정</div>
-    <div class="form-group"><label>제목</label><input type="text" id="ep-title" value="${p.title}"></div>
-    <div class="form-group"><label>내용</label><textarea id="ep-content" style="min-height:140px">${p.content}</textarea></div>
+    <div class="form-group"><label>제목</label><input type="text" id="ep-title" value="${esc(p.title)}"></div>
+    <div class="form-group"><label>내용</label><textarea id="ep-content" style="min-height:140px">${esc(p.content)}</textarea></div>
     <div class="form-group">
       <label>사진 첨부 (최대 4장)</label>
       <input type="file" id="ep-images" accept="image/*" multiple onchange="handleEditPostImageSelect(this)">
@@ -620,6 +767,7 @@ window.editPost = async function(id) {
   await updateDoc(doc(db, 'posts', id), {title, content, images});
   editPostImageFiles = []; editPostExistingImages = [];
   closeModal();
+  toast('글을 수정했어요');
 };
 
 window.deletePost = async function(id) {
@@ -652,8 +800,8 @@ function renderPostDetail() {
   wrap.innerHTML = `
     <button class="btn btn-sm" style="margin-bottom:12px" onclick="closePostDetail()"><i class="ti ti-arrow-left"></i> 목록으로</button>
     <div class="notice-card" style="cursor:default">
-      <div style="font-size:17px;font-weight:500;margin-bottom:6px">${p.title}</div>
-      <div style="font-size:12px;color:var(--text3);margin-bottom:14px">${displayName} · ${formatDate(date)}</div>
+      <div style="font-size:17px;font-weight:500;margin-bottom:6px">${esc(p.title)}</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:14px">${esc(displayName)} · ${formatDate(date)}</div>
       <div style="font-size:14px;line-height:1.8">${(p.images&&p.images.length>0) ? renderPostBodyWithImages(p.content, p.images) : renderClampedText(p.content, 500)}</div>
     </div>
     <div style="margin-top:16px">
@@ -663,7 +811,7 @@ function renderPostDetail() {
           const cdate = c.createdAt ? new Date(c.createdAt.seconds*1000) : new Date();
           const canDel = isAdmin || (currentUser && c.authorUid === currentUser.uid);
           return `<div style="background:var(--bg2);border-radius:var(--radius);padding:10px 12px">
-            <div class="flex-between"><span style="font-size:12px;font-weight:500">${resolveAuthorName(c.authorUid, c.authorName)}</span>
+            <div class="flex-between"><span style="font-size:12px;font-weight:500">${esc(resolveAuthorName(c.authorUid, c.authorName))}</span>
             ${canDel?`<button class="btn btn-sm" style="padding:2px 6px" onclick="deleteComment('${c.id}')"><i class="ti ti-trash" style="font-size:12px"></i></button>`:''}</div>
             <div style="font-size:13px;margin-top:4px">${renderClampedText(c.content, 300)}</div>
             <div style="font-size:10px;color:var(--text3);margin-top:4px">${formatDate(cdate)}</div>
@@ -671,7 +819,7 @@ function renderPostDetail() {
         }).join('')}
       </div>
       <div class="flex" style="gap:8px">
-        <input type="text" id="comment-input" placeholder="댓글을 입력하세요" style="flex:1" onkeydown="if(event.key==='Enter')addComment()">
+        <input type="text" id="comment-input" placeholder="댓글을 입력하세요" style="flex:1" onkeydown="onEnterKey(event, addComment)">
         <button class="btn btn-primary btn-sm" onclick="addComment()">등록</button>
       </div>
     </div>`;
@@ -709,45 +857,134 @@ window.deleteComment = async function(commentId) {
 };
 
 // ── 회원 CRUD ─────────────────────────────────────────────────────
+const ALIAS_HINT = '벙 참석자·정산 이름을 입력할 때 별명으로도 찾을 수 있어요. 대소문자·띄어쓰기는 구분하지 않아요.';
+
 window.openAddMember = function() {
   openModal(`<div class="modal-title"><i class="ti ti-user-plus" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>회원 추가</div>
-    <div class="form-row"><div class="form-group"><label>이름</label><input type="text" id="m-name" placeholder="닉네임" autofocus></div><div class="form-group"><label>가입일</label><input type="date" id="m-join" value="${TODAY.toISOString().slice(0,10)}"></div></div>
+    <div class="form-row"><div class="form-group"><label>이름</label><input type="text" id="m-name" placeholder="닉네임" autofocus></div><div class="form-group"><label>가입일</label><input type="date" id="m-join" value="${todayStr()}"></div></div>
+    <div class="form-group"><label>별명 (선택)</label><input type="text" id="m-aliases" placeholder="예: 의석, uiseok — 쉼표로 여러 개"><div class="settle-hint">${ALIAS_HINT}</div></div>
     <div class="form-group"><label>메모 (선택)</label><textarea id="m-memo" placeholder="특이사항 등"></textarea></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="addMember()">추가</button></div>`);
 };
+
+// 이름/별명이 다른 회원과 겹치면 입력할 때 누구인지 헷갈리므로 저장 전에 한 번 확인
+function confirmNameAndAliases(name, aliases, selfId) {
+  const k = normName(name);
+  const sameName = members.find(m => m.id !== selfId && normName(m.name) === k);
+  if (sameName && !confirm(`이미 "${sameName.name}" 회원이 있어요. 같은 이름으로 저장할까요?`)) return false;
+  const aliasOwner = members.find(m => m.id !== selfId && memberAliases(m).some(a => normName(a) === k));
+  if (aliasOwner && !confirm(`"${name}"은(는) ${aliasOwner.name} 회원의 별명이에요. 그래도 이 이름으로 저장할까요?`)) return false;
+  const conflicts = findAliasConflicts(aliases, selfId);
+  if (conflicts.length && !confirm(`다른 회원과 겹치는 별명이 있어요.\n${conflicts.join('\n')}\n\n그래도 저장할까요? (겹치는 별명으로 입력하면 누구인지 직접 골라야 해요)`)) return false;
+  return true;
+}
 
 window.addMember = async function() {
   const name = document.getElementById('m-name').value.trim();
   const joinDate = document.getElementById('m-join').value;
   if (!name || !joinDate) { alert('이름과 가입일을 입력해주세요.'); return; }
+  const aliases = parseAliasInput(document.getElementById('m-aliases').value, name);
+  if (!confirmNameAndAliases(name, aliases, null)) return;
   const memo = document.getElementById('m-memo').value.trim();
   const numId = nextMemberId++;
-  await addDoc(collection(db, 'members'), {numId, name, joinDate, lastAttend: null, contacted: false, memo});
+  await addDoc(collection(db, 'members'), {numId, name, aliases, joinDate, lastAttend: null, contacted: false, memo});
   closeModal();
+  toast(`${name} 회원을 추가했어요`);
 };
 
 window.openEditMember = function(id) {
   const m = members.find(x => x.id === id);
   if (!m) return;
-  openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>회원 수정 — ${m.name}</div>
-    <div class="form-row"><div class="form-group"><label>이름</label><input type="text" id="e-name" value="${m.name}"></div><div class="form-group"><label>가입일</label><input type="date" id="e-join" value="${m.joinDate}"></div></div>
-    <div class="form-group"><label>최근 참여일</label><input type="date" id="e-attend" value="${m.lastAttend||''}"></div>
-    <div class="form-group"><label>생일 (선택)</label><input type="date" id="e-birthday" value="${m.birthday||''}"></div>
-    <div class="form-group"><label>메모</label><textarea id="e-memo">${m.memo||''}</textarea></div>
+  openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>회원 수정 — ${esc(m.name)}</div>
+    <div class="form-row"><div class="form-group"><label>이름</label><input type="text" id="e-name" value="${esc(m.name)}"></div><div class="form-group"><label>가입일</label><input type="date" id="e-join" value="${esc(m.joinDate)}"></div></div>
+    <div class="form-group"><label>별명</label><input type="text" id="e-aliases" value="${esc(memberAliases(m).join(', '))}" placeholder="예: 의석, uiseok — 쉼표로 여러 개"><div class="settle-hint">${ALIAS_HINT}</div></div>
+    <div class="form-group"><label>최근 참여일</label><input type="date" id="e-attend" value="${esc(m.lastAttend||'')}"></div>
+    <div class="form-group"><label>생일 (선택)</label><input type="date" id="e-birthday" value="${esc(m.birthday||'')}"></div>
+    <div class="form-group"><label>메모</label><textarea id="e-memo">${esc(m.memo||'')}</textarea></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editMember('${id}')">저장</button></div>`);
 };
 
 window.editMember = async function(id) {
   const m = members.find(x => x.id === id);
   if (!m) return;
+  const name = document.getElementById('e-name').value.trim() || m.name;
+  const aliases = parseAliasInput(document.getElementById('e-aliases').value, name);
+  if (!confirmNameAndAliases(name, aliases, id)) return;
   await updateDoc(doc(db, 'members', id), {
-    name: document.getElementById('e-name').value.trim() || m.name,
+    name, aliases,
     joinDate: document.getElementById('e-join').value || m.joinDate,
     lastAttend: document.getElementById('e-attend').value || null,
     birthday: document.getElementById('e-birthday').value || null,
     memo: document.getElementById('e-memo').value.trim(),
   });
   closeModal();
+  toast('회원 정보를 저장했어요');
+};
+
+// 회원 명단의 "별명" 칸에서 바로 여는 간단 편집창
+window.openEditAliases = function(id) {
+  const m = members.find(x => x.id === id);
+  if (!m) return;
+  openModal(`<div class="modal-title"><i class="ti ti-tags" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>별명 — ${esc(m.name)}</div>
+    <div class="form-group"><label>별명 (쉼표로 여러 개)</label><input type="text" id="alias-input" value="${esc(memberAliases(m).join(', '))}" placeholder="예: 의석, uiseok" autofocus onkeydown="onEnterKey(event, () => saveAliases(${jsArg(id)}))"><div class="settle-hint">${ALIAS_HINT}</div></div>
+    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="saveAliases(${jsArg(id)})">저장</button></div>`);
+};
+
+window.saveAliases = async function(id) {
+  const m = members.find(x => x.id === id);
+  const input = document.getElementById('alias-input');
+  if (!m || !input) return;
+  const aliases = parseAliasInput(input.value, m.name);
+  const conflicts = findAliasConflicts(aliases, id);
+  if (conflicts.length && !confirm(`다른 회원과 겹치는 별명이 있어요.\n${conflicts.join('\n')}\n\n그래도 저장할까요?`)) return;
+  await updateDoc(doc(db, 'members', id), {aliases});
+  closeModal();
+  toast(aliases.length ? `${m.name}: ${aliases.join(', ')}` : `${m.name} 별명을 비웠어요`);
+};
+
+// 전체 회원 별명을 한 화면에서 몰아서 입력
+window.openAliasManager = function() {
+  if (!isAdmin) return;
+  const list = sortMembersByName(members);
+  openModal(`<div class="modal-title"><i class="ti ti-tags" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>별명 관리</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.6">${ALIAS_HINT}<br>쉼표로 여러 개를 넣을 수 있어요. (예: 고의석 → <span class="alias-chip">의석</span><span class="alias-chip">uiseok</span>)</div>
+    <input type="search" placeholder="회원 찾기" oninput="filterAliasManager(this.value)" style="margin-bottom:10px">
+    <div id="alias-manager-list" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto;margin-bottom:14px;padding-right:2px">
+      ${list.map(m => `<label class="alias-row" data-search="${esc(memberKeys(m).join(' '))}" style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:13px;font-weight:500;min-width:84px;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.name)}</span>
+        <input type="text" class="alias-manager-input" data-id="${m.id}" value="${esc(memberAliases(m).join(', '))}" placeholder="별명 없음" style="flex:1;min-width:0">
+      </label>`).join('')}
+    </div>
+    <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">닫기</button><button class="btn btn-primary" onclick="saveAliasManager()">저장</button></div>`, 'lg');
+};
+
+window.filterAliasManager = function(q) {
+  const key = normName(q);
+  document.querySelectorAll('#alias-manager-list .alias-row').forEach(row => {
+    row.classList.toggle('is-hidden', !!key && !(row.dataset.search || '').includes(key));
+  });
+};
+
+window.saveAliasManager = async function() {
+  const changes = [];
+  document.querySelectorAll('.alias-manager-input').forEach(input => {
+    const m = members.find(x => x.id === input.dataset.id);
+    if (!m) return;
+    const aliases = parseAliasInput(input.value, m.name);
+    if (aliases.join('\u0000') !== memberAliases(m).join('\u0000')) changes.push({m, aliases});
+  });
+  if (changes.length === 0) { closeModal(); return; }
+  // 저장 후의 상태 기준으로 겹치는 별명 확인
+  const next = members.map(m => ({...m, aliases: (changes.find(c => c.m.id === m.id) || {}).aliases || memberAliases(m)}));
+  const conflicts = [];
+  changes.forEach(({m, aliases}) => aliases.forEach(a => {
+    const k = normName(a);
+    next.forEach(o => { if (o.id !== m.id && memberKeys(o).includes(k)) conflicts.push(`"${a}" (${m.name}) ↔ ${o.name}`); });
+  }));
+  if (conflicts.length && !confirm(`겹치는 별명이 있어요.\n${[...new Set(conflicts)].join('\n')}\n\n그래도 저장할까요?`)) return;
+  for (const {m, aliases} of changes) await updateDoc(doc(db, 'members', m.id), {aliases});
+  closeModal();
+  toast(`${changes.length}명의 별명을 저장했어요`);
 };
 
 window.deleteMember = async function(id) {
@@ -762,6 +999,7 @@ window.deleteMember = async function(id) {
       });
     }
   }
+  toast(`${m.name} 회원을 삭제했어요`, 'info');
 };
 
 window.toggleContact = async function(id, val) {
@@ -776,6 +1014,8 @@ function getMyMember() {
 
 function checkProfileLink() {
   if (!currentUser) return;
+  // 이미 다른 팝업을 보고 있으면 그 위에 덮어쓰지 않음
+  if (document.getElementById('modal-backdrop').classList.contains('open')) return;
   const me = getMyMember();
   if (me) return;
   const pending = members.find(m => m.linkPendingUid === currentUser.uid);
@@ -791,7 +1031,7 @@ window.openLinkProfileModal = function() {
     <div style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.7">${isAdmin?'명단에서 본인 이름을 선택해주세요. 운영진 계정은 즉시 연결됩니다.':'처음 로그인하셨네요! 명단에서 본인 이름을 선택해주세요.<br>운영진 확인 후 연결이 확정됩니다.'}</div>
     <div class="form-group"><label>본인 이름 선택</label>
       <select id="link-member-select"><option value="">선택하세요</option>
-      ${unlinked.map(m=>`<option value="${m.id}">${m.name}</option>`).join('')}
+      ${sortMembersByName(unlinked).map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join('')}
       </select>
     </div>
     ${unlinked.length===0?'<div class="alert alert-info" style="margin-bottom:12px">연결 가능한 명단이 없습니다. 운영진에게 문의해주세요.</div>':''}
@@ -804,7 +1044,7 @@ window.requestProfileLink = async function() {
   if (isAdmin) {
     await updateDoc(doc(db, 'members', id), { linkedUid: currentUser.uid });
     closeModal();
-    alert('프로필이 연결되었습니다.');
+    toast('프로필이 연결되었어요');
     return;
   }
   await updateDoc(doc(db, 'members', id), {
@@ -813,7 +1053,7 @@ window.requestProfileLink = async function() {
     linkPendingName: currentUser.displayName || currentUser.email,
   });
   closeModal();
-  alert('연결 요청이 전송되었습니다. 운영진 확인 후 적용됩니다.');
+  toast('연결 요청을 보냈어요. 운영진 확인 후 적용돼요.', 'info');
 };
 
 window.approveProfileLink = async function(id) {
@@ -843,7 +1083,7 @@ window.openSetRole = function(id) {
   if (!isAdmin) return;
   const m = members.find(x => x.id === id);
   if (!m) return;
-  openModal(`<div class="modal-title"><i class="ti ti-crown" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>역할 지정 — ${m.name}</div>
+  openModal(`<div class="modal-title"><i class="ti ti-crown" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>역할 지정 — ${esc(m.name)}</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.7">운영진과 모임장은 동일한 관리 권한을 가집니다. 역할을 가진 회원은 계정 연결 시 자동으로 운영진 권한이 부여됩니다.</div>
     <div class="form-group"><label>역할</label>
       <select id="role-select">
@@ -860,6 +1100,7 @@ window.saveRole = async function(id) {
   const role = document.getElementById('role-select').value || null;
   await updateDoc(doc(db, 'members', id), {role});
   closeModal();
+  toast('역할을 저장했어요');
 };
 
 // ── 프로필 커스텀 (본인만 수정 가능) ────────────────────────────────
@@ -867,19 +1108,19 @@ window.openEditMyProfile = function(id) {
   const m = members.find(x => x.id === id);
   if (!m || !currentUser || m.linkedUid !== currentUser.uid) { alert('본인 프로필만 수정할 수 있습니다.'); return; }
   openModal(`<div class="modal-title"><i class="ti ti-user-circle" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>내 프로필 수정</div>
-    <div class="form-group"><label>닉네임</label><input type="text" id="mp-name" value="${m.name}"></div>
+    <div class="form-group"><label>닉네임</label><input type="text" id="mp-name" value="${esc(m.name)}"></div>
     <div class="form-group"><label>프로필 사진</label>
       <div class="flex" style="gap:10px;align-items:center">
-        ${m.photoURL?`<img src="${m.photoURL}" style="width:44px;height:44px;border-radius:50%;object-fit:cover">`:''}
+        ${m.photoURL?`<img src="${esc(m.photoURL)}" style="width:44px;height:44px;border-radius:50%;object-fit:cover">`:''}
         <input type="file" id="mp-photo" accept="image/*" style="flex:1">
       </div>
     </div>
-    <div class="form-group"><label>한줄소개</label><input type="text" id="mp-bio" value="${m.bio||''}" placeholder="나를 소개해보세요" maxlength="60"></div>
+    <div class="form-group"><label>한줄소개</label><input type="text" id="mp-bio" value="${esc(m.bio||'')}" placeholder="나를 소개해보세요" maxlength="60"></div>
     <div class="form-row">
-      <div class="form-group"><label>최애 아티스트</label><input type="text" id="mp-artist" value="${m.favArtist||''}" placeholder="예: 요네즈 켄시"></div>
-      <div class="form-group"><label>최애곡</label><input type="text" id="mp-song" value="${m.favSong||''}" placeholder="예: Lemon"></div>
+      <div class="form-group"><label>최애 아티스트</label><input type="text" id="mp-artist" value="${esc(m.favArtist||'')}" placeholder="예: 요네즈 켄시"></div>
+      <div class="form-group"><label>최애곡</label><input type="text" id="mp-song" value="${esc(m.favSong||'')}" placeholder="예: Lemon"></div>
     </div>
-    <div class="form-group"><label>생일 (선택)</label><input type="date" id="mp-birthday" value="${m.birthday||''}"></div>
+    <div class="form-group"><label>생일 (선택)</label><input type="date" id="mp-birthday" value="${esc(m.birthday||'')}"></div>
     <div id="mp-status" style="font-size:12px;color:var(--text2);margin-bottom:8px"></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="saveMyProfile('${id}')">저장</button></div>`);
 };
@@ -905,43 +1146,77 @@ window.saveMyProfile = async function(id) {
     }
     await updateDoc(doc(db, 'members', id), updates);
     closeModal();
+    toast('프로필을 저장했어요');
   } catch(e) {
     statusEl.textContent = '저장 실패: ' + e.message;
   }
 };
 
 // ── 벙 CRUD ───────────────────────────────────────────────────────
+// 참석자 선택기: 체크박스 목록과 위쪽 태그(선택한 순서)를 attendeeOrder로 동기화한다.
+const attendeeOrder = {add: [], edit: []};
+
 function memberSelectHTML(mode, checkedIds=[]) {
+  attendeeOrder[mode] = checkedIds.filter(id => members.some(m => m.id === id));
   return `<div style="display:flex;gap:6px;margin-bottom:6px">
-    <input type="text" id="member-search${mode==='edit'?'-edit':''}" placeholder="이름 입력 후 엔터 또는 쉼표로 구분" style="flex:1;min-width:0" onkeydown="handleAttendeeInput(event,'${mode}')">
+    <input type="text" id="member-search${mode==='edit'?'-edit':''}" placeholder="이름·별명 입력 후 엔터 (쉼표로 여러 명)" autocomplete="off" style="flex:1;min-width:0" oninput="onAttendeeQuery('${mode}')" onkeydown="handleAttendeeInput(event,'${mode}')">
     <button class="btn btn-sm" onclick="handleAttendeeAdd('${mode}')" type="button" style="flex-shrink:0">추가</button>
   </div>
-  <div id="${mode}-tag-area" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:28px">${checkedIds.map(id=>{const m=members.find(x=>x.id===id);return m?`<span class="attendee-tag" data-id="${m.id}">${m.name} <span onclick="removeAttendeeTag(this,'${mode}')" style="cursor:pointer;margin-left:2px">×</span></span>`:''}).join('')}</div>
-  <div class="attendee-scroll" id="${mode}-attendee-list">${members.map(m=>`<label class="attendee-label" data-name="${m.name}" data-id="${m.id}" onclick="toggleAttendeeTag(this,'${mode}')" style="cursor:pointer"><input type="checkbox" class="attend-check" value="${m.id}" ${checkedIds.includes(m.id)?'checked':''}> ${m.name}</label>`).join('')}</div>`;
+  <div class="picker-msg" id="${mode}-picker-msg"></div>
+  <div id="${mode}-tag-area" class="tag-area">${attendeeTagsHTML(mode)}</div>
+  <div class="attendee-scroll" id="${mode}-attendee-list">${sortMembersByName(members).map(m => {
+    const aliases = memberAliases(m);
+    return `<label class="attendee-label" data-id="${m.id}" data-search="${esc(memberKeys(m).join('|'))}"><input type="checkbox" class="attend-check" value="${m.id}" ${checkedIds.includes(m.id)?'checked':''} onchange="onAttendeeCheck('${mode}',this)"> ${esc(m.name)}${aliases.length?` <span class="alias-hint">${esc(aliases.join(', '))}</span>`:''}</label>`;
+  }).join('')}</div>`;
 }
 
-window.openAddBung = function() {
+function defaultBungName(dateStr, type) {
+  const d = parseDateStr(dateStr);
+  return isNaN(d) ? type : `${d.getMonth()+1}월 ${d.getDate()}일 ${type}`;
+}
+// 예전에 입력했던 장소·시간·주제를 자동완성 후보로 제공 (최근 것부터)
+function recentBungValues(field) {
+  const seen = new Set(), out = [];
+  [...bungs].sort((a,b) => (b.date||'').localeCompare(a.date||'')).forEach(b => {
+    const v = (b[field]||'').trim();
+    if (v && !seen.has(v)) { seen.add(v); out.push(v); }
+  });
+  return out.slice(0, 20);
+}
+function bungDatalistsHTML() {
+  return ['place','time','topic'].map(f => `<datalist id="bung-${f}-list">${recentBungValues(f).map(v => `<option value="${esc(v)}"></option>`).join('')}</datalist>`).join('');
+}
+window.updateBungNamePlaceholder = function() {
+  const nameEl = document.getElementById('b-name');
+  if (nameEl) nameEl.placeholder = defaultBungName(document.getElementById('b-date').value, document.getElementById('b-type').value);
+};
+
+window.openAddBung = function(presetDate) {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(presetDate || '') ? presetDate : todayStr();
   openModal(`<div class="modal-title"><i class="ti ti-calendar-plus" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>벙 추가</div>
-    <div class="form-row"><div class="form-group"><label>벙 이름</label><input type="text" id="b-name" placeholder="6월 정모" autofocus></div><div class="form-group"><label>날짜</label><input type="date" id="b-date" value="${TODAY.toISOString().slice(0,10)}"></div></div>
-    <div class="form-row"><div class="form-group"><label>구분</label><select id="b-type"><option value="정모">정모</option><option value="번개">번개</option></select></div><div class="form-group"><label>장소</label><input type="text" id="b-place" placeholder="홍대 코인노래방"></div></div>
-    <div class="form-row"><div class="form-group"><label>시간</label><input type="text" id="b-time" placeholder="오후 7시 30분"></div><div class="form-group"><label>주제</label><input type="text" id="b-topic" placeholder="노래방"></div></div>
+    <div class="form-row"><div class="form-group"><label>벙 이름</label><input type="text" id="b-name" placeholder="${esc(defaultBungName(date, '번개'))}" autofocus></div><div class="form-group"><label>날짜</label><input type="date" id="b-date" value="${date}" onchange="updateBungNamePlaceholder()"></div></div>
+    <div class="settle-hint" style="margin:-6px 0 12px">이름을 비워두면 날짜·구분으로 자동으로 지어져요. (예: ${esc(defaultBungName(date, '번개'))})</div>
+    <div class="form-row"><div class="form-group"><label>구분</label><select id="b-type" onchange="updateBungNamePlaceholder()"><option value="번개" selected>번개</option><option value="정모">정모</option></select></div><div class="form-group"><label>장소</label><input type="text" id="b-place" placeholder="홍대 코인노래방" list="bung-place-list" autocomplete="off"></div></div>
+    <div class="form-row"><div class="form-group"><label>시간</label><input type="text" id="b-time" placeholder="오후 7시 30분" list="bung-time-list" autocomplete="off"></div><div class="form-group"><label>주제</label><input type="text" id="b-topic" placeholder="노래방" list="bung-topic-list" autocomplete="off"></div></div>
     <div class="form-group"><label>참석자 선택</label>${memberSelectHTML('add')}</div>
     <div class="form-group"><label>벙주 (참석자 중 선택)</label><select id="b-host"><option value="">선택 안 함</option></select></div>
     <div class="form-group"><label>메모</label><textarea id="b-memo" placeholder="후기 등"></textarea></div>
+    ${bungDatalistsHTML()}
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="addBung()">추가</button></div>`);
-  setTimeout(() => updateHostSelect('add'), 50);
+  updateHostSelect('add');
 };
 
 window.addBung = async function() {
-  const name = document.getElementById('b-name').value.trim();
   const date = document.getElementById('b-date').value;
-  if (!name || !date) { alert('벙 이름과 날짜를 입력해주세요.'); return; }
-  const attendees = [...document.querySelectorAll('#add-attendee-list .attend-check:checked')].map(c => c.value);
+  const type = document.getElementById('b-type').value;
+  const name = document.getElementById('b-name').value.trim() || defaultBungName(date, type);
+  if (!date) { alert('날짜를 입력해주세요.'); return; }
+  const attendees = [...attendeeOrder.add];
   const hostVal = document.getElementById('b-host').value;
   const numId = nextBungId++;
   await addDoc(collection(db, 'bungs'), {
     numId, date, name, attendees,
-    type: document.getElementById('b-type').value,
+    type,
     place: document.getElementById('b-place').value.trim(),
     time: document.getElementById('b-time').value.trim(),
     topic: document.getElementById('b-topic').value.trim(),
@@ -964,25 +1239,27 @@ window.addBung = async function() {
     }
   }
   closeModal();
+  toast(`"${name}" 벙을 추가했어요${attendees.length ? ` · 참석 ${attendees.length}명` : ''}`);
 };
 
 window.openEditBung = function(id) {
   const b = bungs.find(x => x.id === id);
   if (!b) return;
-  openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>벙 수정 — ${b.name}</div>
-    <div class="form-row"><div class="form-group"><label>벙 이름</label><input type="text" id="eb-name" value="${b.name}"></div><div class="form-group"><label>날짜</label><input type="date" id="eb-date" value="${b.date}"></div></div>
-    <div class="form-row"><div class="form-group"><label>구분</label><select id="eb-type"><option value="정모" ${b.type==='정모'?'selected':''}>정모</option><option value="번개" ${b.type==='번개'?'selected':''}>번개</option></select></div><div class="form-group"><label>장소</label><input type="text" id="eb-place" value="${b.place||''}"></div></div>
-    <div class="form-row"><div class="form-group"><label>시간</label><input type="text" id="eb-time" value="${b.time||''}"></div><div class="form-group"><label>주제</label><input type="text" id="eb-topic" value="${b.topic||''}"></div></div>
+  openModal(`<div class="modal-title"><i class="ti ti-edit" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>벙 수정 — ${esc(b.name)}</div>
+    <div class="form-row"><div class="form-group"><label>벙 이름</label><input type="text" id="eb-name" value="${esc(b.name)}"></div><div class="form-group"><label>날짜</label><input type="date" id="eb-date" value="${esc(b.date)}"></div></div>
+    <div class="form-row"><div class="form-group"><label>구분</label><select id="eb-type"><option value="번개" ${b.type==='번개'?'selected':''}>번개</option><option value="정모" ${b.type==='정모'?'selected':''}>정모</option></select></div><div class="form-group"><label>장소</label><input type="text" id="eb-place" value="${esc(b.place||'')}" list="bung-place-list" autocomplete="off"></div></div>
+    <div class="form-row"><div class="form-group"><label>시간</label><input type="text" id="eb-time" value="${esc(b.time||'')}" list="bung-time-list" autocomplete="off"></div><div class="form-group"><label>주제</label><input type="text" id="eb-topic" value="${esc(b.topic||'')}" list="bung-topic-list" autocomplete="off"></div></div>
     <div class="form-group"><label>참석자 선택</label>${memberSelectHTML('edit', b.attendees||[])}</div>
-    <div class="form-group"><label>벙주 (참석자 중 선택)</label><select id="eb-host"><option value="">선택 안 함</option>${(b.attendees||[]).map(aid=>{const m=members.find(x=>x.id===aid);return m?`<option value="${m.id}" ${b.hostId===m.id?'selected':''}>${m.name}</option>`:''}).join('')}</select></div>
-    <div class="form-group"><label>메모</label><textarea id="eb-memo">${b.memo||''}</textarea></div>
+    <div class="form-group"><label>벙주 (참석자 중 선택)</label><select id="eb-host"><option value="">선택 안 함</option>${(b.attendees||[]).map(aid=>{const m=members.find(x=>x.id===aid);return m?`<option value="${m.id}" ${b.hostId===m.id?'selected':''}>${esc(m.name)}</option>`:''}).join('')}</select></div>
+    <div class="form-group"><label>메모</label><textarea id="eb-memo">${esc(b.memo||'')}</textarea></div>
+    ${bungDatalistsHTML()}
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="editBung('${id}')">저장</button></div>`);
 };
 
 window.editBung = async function(id) {
   const b = bungs.find(x => x.id === id);
   if (!b) return;
-  const attendees = [...document.querySelectorAll('#edit-attendee-list .attend-check:checked')].map(c => c.value);
+  const attendees = [...attendeeOrder.edit];
   const hostVal = document.getElementById('eb-host').value;
   const newDate = document.getElementById('eb-date').value || b.date;
   await updateDoc(doc(db, 'bungs', id), {
@@ -998,6 +1275,7 @@ window.editBung = async function(id) {
   });
   await recalcLastAttend();
   closeModal();
+  toast('벙 정보를 저장했어요');
 };
 
 window.deleteBung = async function(id) {
@@ -1005,22 +1283,21 @@ window.deleteBung = async function(id) {
   if (!b || !confirm(`"${b.name}" 벙을 삭제할까요?`)) return;
   await deleteDoc(doc(db, 'bungs', id));
   await recalcLastAttend();
+  toast(`"${b.name}" 벙을 삭제했어요`, 'info');
 };
 
 async function recalcLastAttend() {
   for (const m of members) {
     let last = null;
     bungs.forEach(b => {
-      if ((b.attendees||[]).includes(m.id)) {
-        const d = new Date(b.date);
-        if (!last || d > last) last = d;
-      }
+      if ((b.attendees||[]).includes(m.id) && b.date && (!last || b.date > last)) last = b.date;
     });
-    const newLast = last ? last.toISOString().slice(0,10) : null;
+    const newLast = last || null;
     const updates = {};
     if (newLast !== m.lastAttend) updates.lastAttend = newLast;
-    // 부활 업적: lastAttend가 새로 갱신되는데 그 시점 상태가 유령/경고였다면 기록
-    if (updates.lastAttend) {
+    // 부활 업적: 참여일이 "더 최근으로" 갱신되는데 그 시점 상태가 유령/경고였다면 기록
+    // (참석자에서 빠져서 참여일이 앞당겨지는 경우는 부활이 아님)
+    if (updates.lastAttend && (!m.lastAttend || updates.lastAttend > m.lastAttend)) {
       const prevStatus = getMemberStatus(m, TODAY);
       if ((prevStatus === 'ghost' || prevStatus === 'contacted') && !m.revivedFromGhost) updates.revivedFromGhost = true;
     }
@@ -1056,21 +1333,50 @@ function renderGallery() {
     return;
   }
   el.innerHTML = galleryFiles.map((f,i) => `
-    <div style="position:relative;aspect-ratio:1;overflow:hidden;border-radius:var(--radius-lg);background:var(--bg2);border:0.5px solid var(--border);cursor:pointer" onclick="openLightbox(${i})">
-      <img src="${f.url}" style="width:100%;height:100%;object-fit:cover" loading="lazy" alt="${f.name}">
+    <div class="gallery-tile" style="position:relative;aspect-ratio:1;overflow:hidden;border-radius:var(--radius-lg);background:var(--bg2);border:0.5px solid var(--border);cursor:pointer" onclick="openLightbox(${i})">
+      <img src="${esc(f.url)}" style="width:100%;height:100%;object-fit:cover" loading="lazy" alt="${esc(f.name)}">
       ${isAdmin ? `<button onclick="event.stopPropagation();deletePhoto(${i})" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.55);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px" class="del-btn edit-only"><i class="ti ti-x"></i></button>` : ''}
     </div>`).join('');
 }
 
+// 사진 크게 보기: ← → 키 / 좌우 버튼 / 스와이프로 넘기기, Esc나 바깥 클릭으로 닫기
+let lightboxIdx = 0;
+window.closeLightbox = function() {
+  const lb = document.getElementById('kiku-lightbox');
+  if (!lb) return;
+  lb.style.opacity = '0';
+  setTimeout(() => lb.remove(), 180);
+};
+window.stepLightbox = function(dir) {
+  if (galleryFiles.length === 0) return;
+  lightboxIdx = (lightboxIdx + dir + galleryFiles.length) % galleryFiles.length;
+  const img = document.getElementById('kiku-lightbox-img');
+  const counter = document.getElementById('kiku-lightbox-count');
+  if (img) { img.style.opacity = '0'; setTimeout(() => { img.src = galleryFiles[lightboxIdx].url; img.style.opacity = '1'; }, 120); }
+  if (counter) counter.textContent = `${lightboxIdx + 1} / ${galleryFiles.length}`;
+};
 window.openLightbox = function(idx) {
   const existing = document.getElementById('kiku-lightbox');
   if (existing) existing.remove();
+  lightboxIdx = idx;
   const lb = document.createElement('div');
   lb.id = 'kiku-lightbox';
-  lb.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:300;display:flex;align-items:center;justify-content:center;padding:1rem';
-  lb.innerHTML = `<button onclick="document.getElementById('kiku-lightbox').remove()" style="position:absolute;top:1rem;right:1rem;color:#fff;font-size:24px;cursor:pointer;background:none;border:none"><i class="ti ti-x"></i></button>
-    <img src="${galleryFiles[idx].url}" style="max-width:100%;max-height:90vh;object-fit:contain;border-radius:var(--radius)" alt="">`;
-  lb.addEventListener('click', e => { if (e.target === lb) lb.remove(); });
+  lb.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:300;display:flex;align-items:center;justify-content:center;padding:1rem;animation:kk-fade-in .2s ease both;transition:opacity .18s ease';
+  const navBtn = 'position:absolute;top:50%;transform:translateY(-50%);color:#fff;font-size:26px;cursor:pointer;background:rgba(255,255,255,0.12);border:none;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center';
+  lb.innerHTML = `<button onclick="closeLightbox()" aria-label="닫기" style="position:absolute;top:1rem;right:1rem;color:#fff;font-size:24px;cursor:pointer;background:none;border:none"><i class="ti ti-x"></i></button>
+    ${galleryFiles.length > 1 ? `<button onclick="stepLightbox(-1)" aria-label="이전 사진" style="${navBtn};left:1rem"><i class="ti ti-chevron-left"></i></button>
+    <button onclick="stepLightbox(1)" aria-label="다음 사진" style="${navBtn};right:1rem"><i class="ti ti-chevron-right"></i></button>
+    <div id="kiku-lightbox-count" style="position:absolute;bottom:1rem;left:0;right:0;text-align:center;color:rgba(255,255,255,.75);font-size:12px">${idx + 1} / ${galleryFiles.length}</div>` : ''}
+    <img id="kiku-lightbox-img" src="${esc(galleryFiles[idx].url)}" style="max-width:100%;max-height:90vh;object-fit:contain;border-radius:var(--radius);transition:opacity .12s ease;animation:kk-modal-in .25s ease both" alt="">`;
+  lb.addEventListener('click', e => { if (e.target === lb) closeLightbox(); });
+  let touchX = null;
+  lb.addEventListener('touchstart', e => { touchX = e.touches[0].clientX; }, {passive: true});
+  lb.addEventListener('touchend', e => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) > 50) stepLightbox(dx < 0 ? 1 : -1);
+    touchX = null;
+  });
   document.body.appendChild(lb);
 };
 
@@ -1079,16 +1385,26 @@ window.uploadPhotos = async function(event) {
   if (!files.length) return;
   const statusEl = document.getElementById('gallery-status');
   const statusText = document.getElementById('gallery-status-text');
+  const input = event.target;
   statusEl.style.display = 'flex';
-  for (let i = 0; i < files.length; i++) {
-    statusText.textContent = `업로드 중... (${i+1}/${files.length}) ${files[i].name}`;
-    const storageRef = ref(storage, `gallery/${Date.now()}_${files[i].name}`);
-    await uploadBytes(storageRef, files[i]);
+  let done = 0;
+  try {
+    for (let i = 0; i < files.length; i++) {
+      statusText.textContent = `업로드 중... (${i+1}/${files.length}) ${files[i].name}`;
+      const storageRef = ref(storage, `gallery/${Date.now()}_${files[i].name}`);
+      await uploadBytes(storageRef, files[i]);
+      done++;
+    }
+    statusText.textContent = '업로드 완료!';
+    toast(`사진 ${done}장을 올렸어요`);
+  } catch(e) {
+    statusText.textContent = `업로드 실패 (${done}/${files.length}장 완료): ${e.message}`;
+    toast('사진 업로드에 실패했어요', 'error');
+  } finally {
+    setTimeout(() => { statusEl.style.display = 'none'; }, 2500);
+    input.value = '';
+    await loadGallery();
   }
-  statusText.textContent = '업로드 완료!';
-  setTimeout(() => { statusEl.style.display = 'none'; }, 2000);
-  event.target.value = '';
-  await loadGallery();
 };
 
 window.deletePhoto = async function(idx) {
@@ -1096,6 +1412,7 @@ window.deletePhoto = async function(idx) {
   await deleteObject(galleryFiles[idx].ref);
   galleryFiles.splice(idx, 1);
   renderGallery();
+  toast('사진을 삭제했어요', 'info');
 };
 // ── 유틸 ──────────────────────────────────────────────────────────
 function getCalcDate() {
@@ -1125,7 +1442,32 @@ function getGhostCycleOptions() {
   }
   return opts;
 }
-let ghostSelectedOffset = 0;
+let ghostSelectedOffset = null; // null = 아직 직접 고르지 않음 → 진행 상태에 맞는 기본값 사용
+
+// ── 유령 정리 진행 상태 ──
+// 기산일이 지난 뒤 이번 정리를 마치면(초기화 실행 또는 "이미 정리했어요") 그 기산일을 "완료"로 기록한다.
+//  · 완료 전: 대시보드·회원 명단·유령 정리 탭 모두 "이번 기산일" 기준 (지금 정리해야 할 대상)
+//  · 완료 후: "다음 기산일" 기준 미리보기 (다음 정리 때 위험한 회원)
+// 예전에는 기산일 다음 날부터 바로 다음 기산일 기준으로 바뀌어서, 지난주에 온 회원까지 모두 "유령 대상"으로 보였음.
+let ghostDoneCycle = (() => { try { return localStorage.getItem('kiku-ghost-done') || null; } catch(e) { return null; } })();
+function rememberGhostDoneCycle(v) {
+  if (!v || (ghostDoneCycle && ghostDoneCycle >= v)) return false;
+  ghostDoneCycle = v;
+  try { localStorage.setItem('kiku-ghost-done', v); } catch(e) {}
+  return true;
+}
+function isCurrentCycleDone() {
+  return !!ghostDoneCycle && ghostDoneCycle >= toDateStr(getGhostCycleDate(0));
+}
+// 앱 전체에서 회원 상태(정상/신규/유령)를 판단하는 기준 기산일
+function getStatusCycle() {
+  return isCurrentCycleDone() ? {date: getGhostCycleDate(-1), preview: true} : {date: getGhostCycleDate(0), preview: false};
+}
+function resolvedGhostOffset() {
+  if (ghostSelectedOffset === null) return isCurrentCycleDone() ? -1 : 0;
+  return ghostSelectedOffset;
+}
+function shortDate(d) { return `${d.getMonth()+1}.${String(d.getDate()).padStart(2,'0')}`; }
 function getYoutubeId(url) {
   if (!url) return null;
   const m = url.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
@@ -1134,7 +1476,7 @@ function getYoutubeId(url) {
 
 function formatDate(d) {
   if (!d) return '-';
-  const dt = typeof d==='string' ? new Date(d) : d;
+  const dt = typeof d==='string' ? (/^\d{4}-\d{2}-\d{2}$/.test(d) ? parseDateStr(d) : new Date(d)) : d;
   if (isNaN(dt)) return '-';
   return `${dt.getFullYear()}.${String(dt.getMonth()+1).padStart(2,'0')}.${String(dt.getDate()).padStart(2,'0')}`;
 }
@@ -1169,11 +1511,16 @@ function getMemberStats() {
   }).sort((a,b) => b.rate-a.rate || b.attended-a.attended);
 }
 
+// 통계 탭의 "최근 2개월" = 오늘 기준 2개월 전 ~ 오늘.
+// (예전에는 다음 기산일 기준으로 잘라서, 기산일 직후엔 기간이 며칠뿐이라 통계가 거의 비어 보였음)
+function recentWindowStartStr() { const d = new Date(TODAY); d.setMonth(d.getMonth()-2); return toDateStr(d); }
+function getRecentBungs() {
+  const from = recentWindowStartStr(), to = todayStr();
+  return bungs.filter(b => b.date && b.date >= from && b.date <= to);
+}
+
 function getRecentMemberStats() {
-  const cd = getCalcDate();
-  const twoMonthsAgo = new Date(cd);
-  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth()-2);
-  const recentBungs = bungs.filter(b => new Date(b.date) >= twoMonthsAgo && new Date(b.date) <= TODAY);
+  const recentBungs = getRecentBungs();
   const totalBungs = recentBungs.length;
   return members.map(m => {
     const attended = recentBungs.filter(b => (b.attendees||[]).includes(m.id)).length;
@@ -1395,7 +1742,7 @@ function renderSeasonAwardsCard() {
         <div style="font-size:13px;font-weight:500">${def.label}</div>
         <div style="font-size:11px;color:var(--text2)">${def.desc}</div>
       </div>
-      <div style="font-size:13px;font-weight:500;color:${a?'var(--warn)':'var(--text2)'}">${a?a.name:'아직 없음'}</div>
+      <div style="font-size:13px;font-weight:500;color:${a?'var(--warn)':'var(--text2)'}">${a?esc(a.name):'아직 없음'}</div>
     </div>`;
   }).join('');
   const historyHTML = pastRecords.length === 0 ? '' : `
@@ -1404,10 +1751,10 @@ function renderSeasonAwardsCard() {
       ${pastRecords.map(rec => {
         const items = SEASON_AWARD_DEFS.filter(def => rec.awards[def.id]).map(def => {
           const a = rec.awards[def.id];
-          return `<span title="${def.label} · ${a.name}" style="font-size:13px;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:3px 9px">${def.icon} ${a.name}</span>`;
+          return `<span title="${def.label} · ${esc(a.name)}" style="font-size:13px;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:3px 9px">${def.icon} ${esc(a.name)}</span>`;
         }).join('');
         return `<div>
-          <div style="font-size:11px;color:var(--text2);margin-bottom:4px">${rec.ym}</div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:4px">${esc(rec.ym)}</div>
           <div style="display:flex;flex-wrap:wrap;gap:6px">${items}</div>
         </div>`;
       }).join('')}
@@ -1435,10 +1782,14 @@ function renderAll() {
   renderUpdates();
   renderNotices();
   renderBoardList();
+  // 따로 그려지는 탭은 지금 보고 있을 때만 갱신 (다른 운영진이 수정한 내용이 바로 반영되도록)
+  if (currentTab === 'calendar') renderCalendar();
+  if (currentTab === 'profile' && !selectedMemberId) renderProfileList();
 }
 
 function renderDashboard() {
-  const cd = getCalcDate();
+  const sc = getStatusCycle();
+  const cd = sc.date;
   const c = {total:members.length, ghost:0, warn:0, safe:0, new:0};
   members.forEach(m => {
     const s = getMemberStatus(m, cd);
@@ -1450,11 +1801,13 @@ function renderDashboard() {
 
   const heroEl = document.getElementById('dash-hero');
   if (heroEl) {
-    const upcoming = bungs.filter(b=>new Date(b.date)>TODAY).sort((a,b)=>new Date(a.date)-new Date(b.date));
+    // 오늘 있는 벙도 "다음 예정 벙"에 포함 (예전에는 오전 9시가 지나면 오늘 벙이 사라졌음)
+    const today = todayStr();
+    const upcoming = bungs.filter(b=>b.date && b.date>=today).sort((a,b)=>a.date.localeCompare(b.date));
     const nextBung = upcoming[0]||null;
     if (nextBung) {
-      const daysLeft = daysBetween(TODAY, new Date(nextBung.date));
-      const d = new Date(nextBung.date);
+      const daysLeft = daysUntil(nextBung.date);
+      const d = parseDateStr(nextBung.date);
       const weekdays = ['일','월','화','수','목','금','토'];
       const host = nextBung.hostId ? members.find(x=>x.id===nextBung.hostId) : null;
       heroEl.innerHTML = `<div class="hero-card">
@@ -1468,18 +1821,20 @@ function renderDashboard() {
         </svg>
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;position:relative">
           <div>
-            <div style="font-size:11px;color:var(--text2);font-weight:500;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px">다음 예정 벙</div>
-            <div style="font-size:22px;font-weight:500;margin-bottom:10px">${nextBung.name}</div>
+            <div style="font-size:11px;color:var(--text2);font-weight:500;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px">${daysLeft===0?'오늘의 벙':'다음 예정 벙'}</div>
+            <div style="font-size:22px;font-weight:500;margin-bottom:10px">${esc(nextBung.name)}</div>
             <div style="display:flex;gap:14px;flex-wrap:wrap">
               <span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:5px"><i class="ti ti-calendar" style="font-size:14px;color:var(--info)"></i>${d.getMonth()+1}월 ${d.getDate()}일(${weekdays[d.getDay()]})</span>
-              ${nextBung.place?`<span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:5px"><i class="ti ti-map-pin" style="font-size:14px;color:var(--danger)"></i>${nextBung.place}</span>`:''}
-              ${nextBung.time?`<span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:5px"><i class="ti ti-clock" style="font-size:14px;color:var(--success)"></i>${nextBung.time}</span>`:''}
-              ${host?`<span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:5px"><i class="ti ti-crown" style="font-size:14px;color:var(--warn)"></i>${host.name}</span>`:''}
+              ${nextBung.place?`<span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:5px"><i class="ti ti-map-pin" style="font-size:14px;color:var(--danger)"></i>${esc(nextBung.place)}</span>`:''}
+              ${nextBung.time?`<span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:5px"><i class="ti ti-clock" style="font-size:14px;color:var(--success)"></i>${esc(nextBung.time)}</span>`:''}
+              ${host?`<span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:5px"><i class="ti ti-crown" style="font-size:14px;color:var(--warn)"></i>${esc(host.name)}</span>`:''}
+              ${(nextBung.attendees||[]).length?`<span style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:5px"><i class="ti ti-users" style="font-size:14px;color:var(--purple)"></i>${(nextBung.attendees||[]).length}명</span>`:''}
             </div>
           </div>
           <div style="text-align:center;flex-shrink:0">
-            <div class="hero-dday">${daysLeft}</div>
-            <div style="font-size:13px;color:var(--info);font-weight:500;margin-top:2px">일 후</div>
+            ${daysLeft===0
+              ? `<div class="hero-dday is-today">오늘</div><div style="font-size:13px;color:var(--danger);font-weight:500;margin-top:2px">D-DAY 🎤</div>`
+              : `<div class="hero-dday">${daysLeft}</div><div style="font-size:13px;color:var(--info);font-weight:500;margin-top:2px">일 후</div>`}
           </div>
         </div>
       </div>`;
@@ -1508,21 +1863,23 @@ function renderDashboard() {
   </div>`;
 
   const ghostEl = document.getElementById('dash-ghost-card');
-  const hasGhost = c.ghost>0||c.warn>0;
+  // 정리 완료 전에는 이번 기산일 대상(빨강), 완료 후에는 다음 기산일 기준 미리보기(주황)
+  const hasGhost = !sc.preview && c.ghost>0;
   if (ghostEl) ghostEl.innerHTML = `<div class="stat-card-big" style="${hasGhost?'border-color:var(--danger-border)':''}">
     <div class="stat-card-icon">👻</div>
-    <div style="font-size:11px;color:var(--text2);font-weight:500;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:12px">유령 현황</div>
-    <div style="display:flex;gap:20px;margin-bottom:14px">
-      <div><div style="font-size:36px;font-weight:500;line-height:1;color:${c.ghost>0?'var(--danger)':'var(--text)'}">${c.ghost}</div><div style="font-size:11px;color:var(--text2);margin-top:3px">퇴출 대상</div></div>
+    <div style="font-size:11px;color:var(--text2);font-weight:500;letter-spacing:0.5px;margin-bottom:12px">유령 현황 · ${sc.preview?`다음 정리(${shortDate(cd)}) 미리보기`:`이번 정리(${shortDate(cd)}) 기준`}</div>
+    <div style="display:flex;gap:20px;margin-bottom:10px">
+      <div><div style="font-size:36px;font-weight:500;line-height:1;color:${c.ghost>0?(sc.preview?'var(--warn)':'var(--danger)'):'var(--text)'}">${c.ghost}</div><div style="font-size:11px;color:var(--text2);margin-top:3px">${sc.preview?'정리 위험':'퇴출 대상'}</div></div>
       <div style="width:0.5px;background:var(--border)"></div>
-      <div><div style="font-size:36px;font-weight:500;line-height:1;color:${c.warn>0?'var(--warn)':'var(--text)'}">${c.warn}</div><div style="font-size:11px;color:var(--text2);margin-top:3px">연락 완료</div></div>
+      <div><div style="font-size:36px;font-weight:500;line-height:1;color:${c.warn>0?'var(--purple)':'var(--text)'}">${c.warn}</div><div style="font-size:11px;color:var(--text2);margin-top:3px">연락 완료</div></div>
     </div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:10px">${sc.preview?`이번 정리(${shortDate(getGhostCycleDate(0))}) 완료 ✓ · 다음 정리 전까지 참석이 없으면 대상이 돼요`:'정리를 마치고 유령 정리 탭에서 초기화하면 다음 정리 기준으로 바뀌어요'}</div>
     <button class="btn btn-sm ${hasGhost?'btn-danger':''}" onclick="switchTab('ghost')" style="font-size:12px;width:100%">유령 정리 탭 →</button>
   </div>`;
 
   const recentEl = document.getElementById('dash-recent-bung');
   if (recentEl) {
-    const recent = [...bungs].filter(b=>new Date(b.date)<=TODAY).slice(0,4);
+    const recent = [...bungs].filter(b=>b.date && b.date<=todayStr()).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,4);
     recentEl.innerHTML = `<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <div style="font-size:13px;font-weight:500">최근 벙</div>
@@ -1530,7 +1887,7 @@ function renderDashboard() {
       </div>
       ${recent.length===0?'<div style="font-size:13px;color:var(--text2)">기록된 벙이 없습니다.</div>':
       recent.map((b,i)=>{
-        const names=(b.attendees||[]).map(id=>{const m=members.find(x=>x.id===id);return m?m.name[0]:'?'});
+        const names=(b.attendees||[]).map(id=>{const m=members.find(x=>x.id===id);return m?esc([...(m.name||'?')][0]):'?'});
         const typeBadge=b.type==='번개'?'<span class="badge badge-bungae">번개</span>':'<span class="badge badge-jeongmo">정모</span>';
         return `<div class="timeline-item" style="${i===recent.length-1?'border-bottom:none':''}">
           <div style="display:flex;flex-direction:column;align-items:center;padding-top:4px">
@@ -1538,8 +1895,8 @@ function renderDashboard() {
             ${i<recent.length-1?'<div class="timeline-line" style="flex:1;margin-top:4px"></div>':''}
           </div>
           <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">${typeBadge}<strong style="font-size:13px">${b.name}</strong></div>
-            <div style="font-size:12px;color:var(--text2);margin-bottom:6px">${formatDate(b.date)}${b.place?` · ${b.place}`:''}</div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">${typeBadge}<strong style="font-size:13px">${esc(b.name)}</strong></div>
+            <div style="font-size:12px;color:var(--text2);margin-bottom:6px">${formatDate(b.date)}${b.place?` · ${esc(b.place)}`:''}</div>
             <div style="display:flex;gap:2px;flex-wrap:wrap">${names.slice(0,8).map(n=>`<div class="avatar">${n}</div>`).join('')}${names.length>8?`<div class="avatar" style="background:var(--bg2);color:var(--text2)">+${names.length-8}</div>`:''}</div>
           </div>
           <div style="font-size:12px;color:var(--text2);flex-shrink:0">${(b.attendees||[]).length}명</div>
@@ -1563,8 +1920,8 @@ function renderDashboard() {
     mvpEl.innerHTML = `<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
       <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase;margin-bottom:10px">⭐ 이달의 MVP</div>
       ${mvp?`<div style="display:flex;align-items:center;gap:10px">
-        ${mvp.photoURL?`<img src="${mvp.photoURL}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0">`:`<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--warn-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:500;flex-shrink:0">${mvp.name[0]}</div>`}
-        <div><div style="font-weight:500">${mvp.name}</div><div style="font-size:12px;color:var(--text2);margin-top:2px">이번 달 ${mvp.count}/${mvp.total}회 참석</div></div>
+        ${mvp.photoURL?`<img src="${esc(mvp.photoURL)}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0">`:`<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--warn-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:500;flex-shrink:0">${esc([...mvp.name][0]||'')}</div>`}
+        <div><div style="font-weight:500">${esc(mvp.name)}</div><div style="font-size:12px;color:var(--text2);margin-top:2px">이번 달 ${mvp.count}/${mvp.total}회 참석</div></div>
         <div style="margin-left:auto;font-size:22px">🏆</div>
       </div>`:`<div style="font-size:13px;color:var(--text2)">이번 달 벙 기록 없음</div>`}
     </div>`;
@@ -1577,27 +1934,30 @@ function renderDashboard() {
     newbiesEl.innerHTML = `<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
       <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase;margin-bottom:10px">🌱 이번 달 신규 (${newbies.length}명)</div>
       ${newbies.length===0?'<div style="font-size:13px;color:var(--text2)">신규 회원 없음</div>':
-      `<div style="display:flex;flex-wrap:wrap;gap:6px">${newbies.map(m=>`<span style="font-size:12px;padding:3px 10px;border-radius:20px;background:var(--success-bg);color:var(--success);font-weight:500">${m.name}</span>`).join('')}</div>`}
+      `<div style="display:flex;flex-wrap:wrap;gap:6px">${newbies.map(m=>`<span style="font-size:12px;padding:3px 10px;border-radius:20px;background:var(--success-bg);color:var(--success);font-weight:500">${esc(m.name)}</span>`).join('')}</div>`}
     </div>`;
   }
 
   const annexEl = document.getElementById('dash-anniversary');
   if (annexEl) {
+    const today0 = parseDateStr(todayStr());
     const upcoming14 = members.map(m=>{
       if (!m.joinDate) return null;
-      const join = new Date(m.joinDate);
-      const years = TODAY.getFullYear()-join.getFullYear();
+      const join = parseDateStr(m.joinDate);
+      // 올해 기념일이 이미 지났으면 내년 기념일 기준 (12월 말에 1월 초 기념일도 보이도록)
+      let anniv = new Date(today0.getFullYear(), join.getMonth(), join.getDate());
+      if (anniv < today0) anniv = new Date(today0.getFullYear()+1, join.getMonth(), join.getDate());
+      const years = anniv.getFullYear()-join.getFullYear();
       if (years < 1) return null;
-      const anniv = new Date(TODAY.getFullYear(), join.getMonth(), join.getDate());
-      const diff = Math.floor((anniv-TODAY)/(1000*60*60*24));
-      if (diff < 0 || diff > 14) return null;
+      const diff = Math.round((anniv-today0)/(1000*60*60*24));
+      if (diff > 14) return null;
       return {...m, years, diff};
     }).filter(Boolean).sort((a,b)=>a.diff-b.diff);
     annexEl.innerHTML = `<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
       <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase;margin-bottom:10px">🎂 다가오는 기념일</div>
       ${upcoming14.length===0?'<div style="font-size:13px;color:var(--text2)">2주 내 기념일 없음</div>':
       `<div style="display:flex;flex-direction:column;gap:6px">${upcoming14.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between">
-        <div style="font-size:13px;font-weight:500">${m.name} <span style="font-size:11px;color:var(--warn)">${m.years}주년</span></div>
+        <div style="font-size:13px;font-weight:500">${esc(m.name)} <span style="font-size:11px;color:var(--warn)">${m.years}주년</span></div>
         <div style="font-size:12px;color:var(--text2)">${m.diff===0?'오늘!':m.diff+'일 후'}</div>
       </div>`).join('')}</div>`}
     </div>`;
@@ -1638,9 +1998,9 @@ function renderTodaySong() {
       <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase">🎵 오늘의 노래 추천</div>
       ${isAdmin?`<button class="btn btn-sm" onclick="openPlaylistManager()"><i class="ti ti-playlist"></i> 관리</button>`:''}
     </div>
-    <div style="font-size:18px;font-weight:600">${pick.songName}</div>
-    ${pick.artistName?`<div style="font-size:13px;color:var(--text2);margin-top:2px">${pick.artistName}</div>`:''}
-    <div style="font-size:11px;color:var(--text3);margin-top:8px">${sourceLabel} · 추천곡 ${pool.length}개 중 오늘의 선곡</div>
+    <div style="font-size:18px;font-weight:600">${esc(pick.songName)}</div>
+    ${pick.artistName?`<div style="font-size:13px;color:var(--text2);margin-top:2px">${esc(pick.artistName)}</div>`:''}
+    <div style="font-size:11px;color:var(--text3);margin-top:8px">${esc(sourceLabel)} · 추천곡 ${pool.length}개 중 오늘의 선곡${getYoutubeId(pick.youtubeUrl)?` · <a href="https://youtu.be/${getYoutubeId(pick.youtubeUrl)}" target="_blank" rel="noopener" style="color:var(--info)"><i class="ti ti-brand-youtube" style="vertical-align:-2px"></i> 듣기</a>`:''}</div>
   </div>`;
 }
 
@@ -1671,7 +2031,7 @@ function renderPlaylistManager() {
   if (!el) return;
   if (playlist.length === 0) { el.innerHTML = '<div style="font-size:13px;color:var(--text2)">등록된 곡이 없습니다.</div>'; return; }
   el.innerHTML = playlist.map(p => `<div class="flex-between" style="background:var(--bg2);border-radius:var(--radius);padding:8px 10px">
-    <div><span style="font-size:13px;font-weight:500">${p.songName}</span>${p.artistName?`<span style="font-size:12px;color:var(--text2);margin-left:6px">${p.artistName}</span>`:''}${p.youtubeUrl?'<span style="font-size:11px;margin-left:6px" title="유튜브 링크 등록됨">🎬</span>':''}</div>
+    <div><span style="font-size:13px;font-weight:500">${esc(p.songName)}</span>${p.artistName?`<span style="font-size:12px;color:var(--text2);margin-left:6px">${esc(p.artistName)}</span>`:''}${p.youtubeUrl?'<span style="font-size:11px;margin-left:6px" title="유튜브 링크 등록됨">🎬</span>':''}</div>
     <button class="btn btn-sm btn-danger" onclick="deletePlaylistSong('${p.id}')"><i class="ti ti-trash"></i></button>
   </div>`).join('');
 }
@@ -1687,6 +2047,7 @@ window.addPlaylistSong = async function() {
   document.getElementById('pl-song').value = '';
   document.getElementById('pl-artist').value = '';
   document.getElementById('pl-youtube').value = '';
+  toast(`"${songName}" 추가했어요`);
 };
 
 window.deletePlaylistSong = async function(id) {
@@ -1698,13 +2059,19 @@ function renderDashboardAlerts() {
   const cd = getCalcDate();
   const el = document.getElementById('dashboard-alerts');
   if (!el) return;
-  if (isCalcDay()) {
+  if (isCalcDay() && !isCurrentCycleDone()) {
     el.innerHTML = `<div class="alert alert-danger"><i class="ti ti-alert-triangle"></i><div><strong>오늘이 유령 회원 정리일입니다!</strong> 유령 정리 탭에서 조치 후 초기화를 진행해주세요.</div></div>`;
+  } else if (isAdmin && !isCurrentCycleDone() && toDateStr(getGhostCycleDate(0)) < todayStr()) {
+    // 기산일이 지났는데 아직 이번 정리를 마치지 않은 경우 (운영진에게만 표시)
+    const cur = getGhostCycleDate(0);
+    el.innerHTML = `<div class="alert alert-warning" style="align-items:center"><i class="ti ti-ghost"></i><div style="flex:1"><strong>이번 유령 정리(${formatDate(cur)} 기준)가 아직 남아 있어요.</strong> 정리 후 초기화하면 완료로 바뀌어요. <span style="opacity:.8">다음 정리일: ${formatDate(cd)}</span></div><button class="btn btn-sm btn-warn" onclick="switchTab('ghost')" style="flex-shrink:0">정리하기 →</button></div>`;
   } else {
-    const diff = daysBetween(TODAY, cd);
+    // 정리일 당일에 이미 정리를 마쳤으면 그 다음 정리일을 안내
+    const next = isCalcDay() ? getGhostCycleDate(-1) : cd;
+    const diff = daysUntil(toDateStr(next)); // 시각과 무관하게 달력 날짜 차이로 계산
     el.innerHTML = diff <= 7
-      ? `<div class="alert alert-warning"><i class="ti ti-clock"></i>다음 유령 정리일까지 <strong>${diff}일</strong> 남았습니다. (${formatDate(cd)})</div>`
-      : `<div class="alert alert-info"><i class="ti ti-info-circle"></i>다음 유령 정리일: <strong>${formatDate(cd)}</strong> (${diff}일 후)</div>`;
+      ? `<div class="alert alert-warning"><i class="ti ti-clock"></i>다음 유령 정리일까지 <strong>${diff}일</strong> 남았습니다. (${formatDate(next)})</div>`
+      : `<div class="alert alert-info"><i class="ti ti-info-circle"></i>다음 유령 정리일: <strong>${formatDate(next)}</strong> (${diff}일 후)</div>`;
   }
 }
 
@@ -1726,7 +2093,7 @@ function renderDashboardAchievements() {
         const achvs=getAchievements(x.m).filter(a=>a.unlocked);
         return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border)">
           <span style="font-size:18px">${medals[i]}</span>
-          <div style="flex:1"><div style="font-size:13px;font-weight:500">${x.m.name}</div>
+          <div style="flex:1"><div style="font-size:13px;font-weight:500">${esc(x.m.name)}</div>
           <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${achvs.map(a=>`<span title="${a.label}" style="font-size:16px">${a.icon}</span>`).join('')}</div></div>
           <div style="font-size:12px;color:var(--text2)">${x.count}개</div>
         </div>`;
@@ -1745,7 +2112,7 @@ function renderDashboardAchievements() {
         <div style="font-size:12px;font-weight:500;color:var(--text2);letter-spacing:0.4px;text-transform:uppercase;margin-bottom:10px">🎖️ 업적 현황</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px">
           ${show.map(a=>`<div style="display:flex;align-items:center;gap:6px;background:var(--bg2);border-radius:var(--radius);padding:6px 10px;font-size:12px">
-            <span style="font-size:16px">${a.icon}</span><span style="font-weight:500">${a.member}</span><span style="color:var(--text2)">${a.label}</span>
+            <span style="font-size:16px">${a.icon}</span><span style="font-weight:500">${esc(a.member)}</span><span style="color:var(--text2)">${a.label}</span>
           </div>`).join('')}
         </div>
       </div>`;
@@ -1761,7 +2128,7 @@ function renderLinkRequests() {
   el.innerHTML = `<div class="alert alert-info" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:1rem">
     <div style="font-weight:500"><i class="ti ti-user-plus"></i> 프로필 연결 요청 (${pending.length}건)</div>
     ${pending.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border-radius:var(--radius);padding:8px 12px;flex-wrap:wrap">
-      <span style="font-size:13px;min-width:0">"<strong>${m.linkPendingName}</strong>"님이 <strong>${m.name}</strong> 회원으로 연결을 요청했습니다.</span>
+      <span style="font-size:13px;min-width:0">"<strong>${esc(m.linkPendingName)}</strong>"님이 <strong>${esc(m.name)}</strong> 회원으로 연결을 요청했습니다.</span>
       <div class="flex" style="gap:6px;flex-shrink:0">
         <button class="btn btn-sm btn-primary" onclick="approveProfileLink('${m.id}')">승인</button>
         <button class="btn btn-sm btn-danger" onclick="rejectProfileLink('${m.id}')">거부</button>
@@ -1770,92 +2137,147 @@ function renderLinkRequests() {
   </div>`;
 }
 
+let memberSearchQuery = '';
 function renderMembers() {
-  const cd = getCalcDate();
+  const sc = getStatusCycle();
+  const cd = sc.date;
   const tbody = document.getElementById('member-tbody');
   const empty = document.getElementById('member-empty');
   if (!tbody) return;
-  if (members.length === 0) { tbody.innerHTML = ''; empty.style.display='block'; return; }
+  const statusTh = document.getElementById('member-status-th');
+  if (statusTh) {
+    statusTh.innerHTML = `상태 <span style="font-weight:400;color:var(--text3)">· ${sc.preview?'다음':'이번'} 정리 ${shortDate(cd)}</span>`;
+    statusTh.title = sc.preview ? `이번 정리를 마쳐서 다음 정리(${formatDate(cd)}) 기준으로 표시 중` : `이번 정리(${formatDate(cd)}) 기준으로 표시 중`;
+  }
+  if (members.length === 0) { tbody.innerHTML = ''; empty.style.display='block'; applyMemberFilter(); return; }
   empty.style.display = 'none';
   const sortVal = document.getElementById('member-sort')?.value || 'join';
+  const attendCount = {};
+  bungs.forEach(b => (b.attendees||[]).forEach(id => { attendCount[id] = (attendCount[id]||0) + 1; }));
   const sorted = [...members].sort((a,b)=>{
-    if (sortVal==='name') return a.name.localeCompare(b.name,'ko');
-    if (sortVal==='rate') {
-      const ra = bungs.length>0?bungs.filter(bng=>(bng.attendees||[]).includes(a.id)).length/bungs.length:0;
-      const rb = bungs.length>0?bungs.filter(bng=>(bng.attendees||[]).includes(b.id)).length/bungs.length:0;
-      return rb-ra;
-    }
-    return new Date(a.joinDate)-new Date(b.joinDate);
+    if (sortVal==='name') return (a.name||'').localeCompare(b.name||'','ko');
+    if (sortVal==='rate') return (attendCount[b.id]||0) - (attendCount[a.id]||0);
+    return (a.joinDate||'').localeCompare(b.joinDate||'');
   });
-  const badgeMap = {ghost:'<span class="badge badge-ghost">유령 대상</span>',contacted:'<span class="badge badge-contact">연락 완료</span>',safe:'<span class="badge badge-safe">정상</span>',new:'<span class="badge badge-new">신규</span>'};
+  // 이번 정리 기준이면 "유령 대상"(빨간 줄), 정리를 마친 뒤 다음 정리 미리보기면 "정리 위험"(주황)
+  const badgeMap = {ghost: sc.preview ? `<span class="badge badge-bungae" title="다음 정리(${shortDate(cd)}) 전까지 참석이 없으면 유령 대상">정리 위험</span>` : '<span class="badge badge-ghost">유령 대상</span>',contacted:'<span class="badge badge-contact">연락 완료</span>',safe:'<span class="badge badge-safe">정상</span>',new:'<span class="badge badge-new">신규</span>'};
   tbody.innerHTML = sorted.map(m=>{
     const status = getMemberStatus(m, cd);
-    const rc = status==='ghost'?' class="member-row-ghost"':'';
-    const attended = bungs.filter(b=>(b.attendees||[]).includes(m.id)).length;
+    const rc = status==='ghost' && !sc.preview ?' class="member-row-ghost"':'';
+    const attended = attendCount[m.id]||0;
     const rate = bungs.length>0?Math.round(attended/bungs.length*100):0;
     const grade = getMemberGrade(rate);
     const gradeBadge = `<span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${grade.bg};color:${grade.color};font-weight:500">${grade.label}</span>`;
-    const memo = m.memo?`<div class="memo-text">📝 ${m.memo}</div>`:'<span style="color:var(--text3);font-size:12px">-</span>';
+    const memo = m.memo?`<div class="memo-text">📝 ${esc(m.memo)}</div>`:'<span style="color:var(--text3);font-size:12px">-</span>';
     const linkBadge = m.linkedUid ? `<i class="ti ti-link" style="color:var(--success);font-size:12px;margin-left:4px" title="계정 연결됨"></i>` : '';
     const roleLabel = m.role==='admin' ? '운영진' : m.role==='host' ? '모임장' : '';
     const roleBadge = roleLabel ? `<span style="font-size:10px;background:var(--warn-bg);color:var(--warn);padding:1px 5px;border-radius:3px;margin-left:4px">${roleLabel}</span>` : '';
-    return `<tr${rc}><td><strong>${m.name}</strong>${linkBadge}${roleBadge}</td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'<span style="color:var(--text2)">없음</span>'}</td><td style="text-align:center"><input type="checkbox" class="contact-check" ${m.contacted?'checked':''} onchange="toggleContact('${m.id}',this.checked)" ${isAdmin?'':' disabled'}></td><td>${badgeMap[status]}</td><td>${gradeBadge}</td><td>${memo}</td><td class="edit-only"><div class="flex" style="gap:4px"><button class="btn btn-sm" onclick="openEditMember('${m.id}')"><i class="ti ti-edit"></i></button><button class="btn btn-sm" onclick="openSetRole('${m.id}')" title="역할 지정"><i class="ti ti-crown"></i></button>${m.linkedUid?`<button class="btn btn-sm" onclick="unlinkProfile('${m.id}')" title="연결 해제"><i class="ti ti-unlink"></i></button>`:''}<button class="btn btn-sm btn-danger" onclick="deleteMember('${m.id}')"><i class="ti ti-trash"></i></button></div></td></tr>`;
+    const aliases = memberAliases(m);
+    const aliasCell = aliases.map(a => `<span class="alias-chip">${esc(a)}</span>`).join('')
+      + (isAdmin ? `<button class="alias-edit-btn" onclick="openEditAliases('${m.id}')" title="별명 편집">${aliases.length ? '<i class="ti ti-pencil" style="font-size:11px;vertical-align:-1px"></i>' : '+ 별명'}</button>`
+                 : (aliases.length ? '' : '<span style="color:var(--text3);font-size:12px">-</span>'));
+    return `<tr${rc} data-search="${esc(memberKeys(m).join('|'))}"><td style="white-space:nowrap"><strong class="member-link" onclick="goToProfile('${m.id}')" title="프로필 보기">${esc(m.name)}</strong>${linkBadge}${roleBadge}</td><td style="max-width:180px">${aliasCell}</td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'<span style="color:var(--text2)">없음</span>'}</td><td style="text-align:center"><input type="checkbox" class="contact-check" ${m.contacted?'checked':''} onchange="toggleContact('${m.id}',this.checked)" ${isAdmin?'':' disabled'}></td><td>${badgeMap[status]}</td><td>${gradeBadge}</td><td>${memo}</td><td class="edit-only"><div class="flex" style="gap:4px"><button class="btn btn-sm" onclick="openEditMember('${m.id}')"><i class="ti ti-edit"></i></button><button class="btn btn-sm" onclick="openSetRole('${m.id}')" title="역할 지정"><i class="ti ti-crown"></i></button>${m.linkedUid?`<button class="btn btn-sm" onclick="unlinkProfile('${m.id}')" title="연결 해제"><i class="ti ti-unlink"></i></button>`:''}<button class="btn btn-sm btn-danger" onclick="deleteMember('${m.id}')"><i class="ti ti-trash"></i></button></div></td></tr>`;
   }).join('');
+  applyMemberFilter();
+}
+// 회원 명단 정렬 드롭다운(onchange="renderMembers()")에서 부를 수 있도록 전역에 노출
+// (모듈 스크립트라 그동안 정렬을 바꿔도 동작하지 않았음)
+window.renderMembers = renderMembers;
+
+// 검색어는 이름·별명 모두에서, 대소문자 무시하고 찾음. 데이터가 바뀌어 목록이 다시 그려져도 검색 상태 유지.
+window.filterMembers = function(q) { memberSearchQuery = q; applyMemberFilter(); };
+function applyMemberFilter() {
+  const key = normName(memberSearchQuery);
+  let shown = 0;
+  document.querySelectorAll('#member-tbody tr').forEach(row => {
+    const ok = !key || (row.dataset.search || '').includes(key);
+    row.classList.toggle('is-hidden', !ok);
+    if (ok) shown++;
+  });
+  const countEl = document.getElementById('member-count');
+  if (countEl) countEl.textContent = members.length === 0 ? '' : key ? `${shown} / ${members.length}명` : `${members.length}명`;
+}
+window.goToProfile = function(id) { switchTab('profile'); openProfile(id); };
+
+let bungSearchQuery = '';
+window.filterBungs = function(q) { bungSearchQuery = q; renderBungs(); };
+function bungMatchesQuery(b, key) {
+  if (!key) return true;
+  const people = (b.attendees||[]).flatMap(id => { const m = members.find(x => x.id === id); return m ? [m.name, ...memberAliases(m)] : []; });
+  return [b.name, b.place, b.topic, b.type, ...people].map(normName).join('|').includes(key);
 }
 
 function renderBungs() {
   const el = document.getElementById('bung-list');
   if (!el) return;
-  const sorted = [...bungs];
-  if (sorted.length === 0) { el.innerHTML='<div class="empty-state"><i class="ti ti-calendar-off"></i>등록된 벙이 없습니다.</div>'; return; }
-  el.innerHTML = sorted.map(b=>{
-    const isPast = new Date(b.date) <= TODAY;
+  if (bungs.length === 0) { el.innerHTML='<div class="empty-state"><i class="ti ti-calendar-off"></i>등록된 벙이 없습니다.</div>'; return; }
+  const today = todayStr();
+  const key = normName(bungSearchQuery);
+  const list = [...bungs].sort((a,b) => (b.date||'').localeCompare(a.date||'')).filter(b => bungMatchesQuery(b, key));
+  if (list.length === 0) { el.innerHTML = `<div class="empty-state"><i class="ti ti-search"></i>"${esc(bungSearchQuery)}"에 해당하는 벙이 없어요.</div>`; return; }
+  let lastYm = '';
+  el.innerHTML = list.map(b=>{
+    // 월이 바뀌는 곳마다 구분선 (예: 2026년 10월 · 3개)
+    const ym = (b.date||'').slice(0,7);
+    let divider = '';
+    if (ym !== lastYm) {
+      lastYm = ym;
+      const [y, mo] = ym.split('-');
+      divider = `<div class="month-divider">${y}년 ${parseInt(mo)}월 · ${list.filter(x => (x.date||'').startsWith(ym)).length}개</div>`;
+    }
+    const isToday = b.date === today;
+    const isPast = b.date < today;
     const names = (b.attendees||[]).map(id=>{const m=members.find(x=>x.id===id);return m?m.name:'?'});
     const host = b.hostId ? members.find(x=>x.id===b.hostId) : null;
     const typeBadge = b.type==='번개'?'<span class="badge badge-bungae">번개</span>':'<span class="badge badge-jeongmo">정모</span>';
+    const statusBadge = isToday ? '<span class="badge badge-today">오늘</span>' : isPast ? '<span class="badge badge-safe">완료</span>' : `<span class="badge badge-new">예정 · D-${daysUntil(b.date)}</span>`;
     const settledBadge = b.settlement ? '<span class="badge badge-safe"><i class="ti ti-receipt-2" style="font-size:11px"></i> 정산완료</span>' : '';
-    return `<div style="background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;margin-bottom:10px">
+    return divider + `<div class="bung-card${isToday?' is-today':''}">
       <div class="flex-between mb-1">
-        <div class="flex" style="min-width:0;flex-wrap:wrap">${typeBadge}<strong>${b.name}</strong>${isPast?'<span class="badge badge-safe">완료</span>':'<span class="badge badge-new">예정</span>'}${settledBadge}</div>
+        <div class="flex" style="min-width:0;flex-wrap:wrap">${typeBadge}<strong>${esc(b.name)}</strong>${statusBadge}${settledBadge}</div>
         <div class="flex" style="gap:4px;flex-wrap:wrap">
           <button class="btn btn-sm btn-info" onclick="openTemplate('${b.id}')"><i class="ti ti-speakerphone"></i> 공지</button>
-          ${isPast?`<button class="btn btn-sm" onclick="openBungRecap('${b.id}')"><i class="ti ti-sparkles"></i> 회고</button>`:''}
+          ${(isPast||isToday)?`<button class="btn btn-sm" onclick="openBungRecap('${b.id}')"><i class="ti ti-sparkles"></i> 회고</button>`:''}
           <button class="btn btn-sm" onclick="openSettlement('${b.id}')"><i class="ti ti-calculator"></i> 정산</button>
           <button class="btn btn-sm edit-only" onclick="openEditBung('${b.id}')"><i class="ti ti-edit"></i> 수정</button>
           <button class="btn btn-sm btn-danger edit-only" onclick="deleteBung('${b.id}')"><i class="ti ti-trash"></i></button>
         </div>
       </div>
       <div style="font-size:12px;color:var(--text2);display:flex;gap:12px;flex-wrap:wrap;margin-top:4px">
-        <span><i class="ti ti-calendar" style="font-size:13px"></i> ${formatDate(b.date)}</span>
-        ${b.place?`<span><i class="ti ti-map-pin" style="font-size:13px"></i> ${b.place}</span>`:''}
-        ${host?`<span><i class="ti ti-crown" style="font-size:13px"></i> ${host.name}</span>`:''}
-        <span><i class="ti ti-users" style="font-size:13px"></i> ${names.join(', ')||'없음'} (${names.length}명)</span>
+        <span><i class="ti ti-calendar" style="font-size:13px"></i> ${formatDate(b.date)}${b.time?` ${esc(b.time)}`:''}</span>
+        ${b.place?`<span><i class="ti ti-map-pin" style="font-size:13px"></i> ${esc(b.place)}</span>`:''}
+        ${host?`<span><i class="ti ti-crown" style="font-size:13px"></i> ${esc(host.name)}</span>`:''}
+        <span><i class="ti ti-users" style="font-size:13px"></i> ${names.map(esc).join(', ')||'없음'} (${names.length}명)</span>
       </div>
-      ${b.memo?`<div class="memo-text" style="margin-top:6px">📝 ${b.memo}</div>`:''}
+      ${b.memo?`<div class="memo-text" style="margin-top:6px">📝 ${esc(b.memo)}</div>`:''}
     </div>`;
   }).join('');
 }
 
 function renderGhost() {
+  const offset = resolvedGhostOffset();
   const selEl = document.getElementById('ghost-period-select');
-  if (selEl) selEl.innerHTML = getGhostCycleOptions().map(o=>`<option value="${o.offset}" ${o.offset===ghostSelectedOffset?'selected':''}>${o.label}</option>`).join('');
-  const cd = getGhostCycleDate(ghostSelectedOffset);
-  const isExactlyToday = TODAY.getDate()===cd.getDate() && TODAY.getMonth()===cd.getMonth() && TODAY.getFullYear()===cd.getFullYear();
-  const isCurrentCycle = ghostSelectedOffset===0;
+  if (selEl) selEl.innerHTML = getGhostCycleOptions().map(o=>`<option value="${o.offset}" ${o.offset===offset?'selected':''}>${o.label}${o.offset===0&&isCurrentCycleDone()?' ✓ 완료':''}</option>`).join('');
+  const cd = getGhostCycleDate(offset);
+  const isExactlyToday = toDateStr(cd) === todayStr();
+  const isCurrentCycle = offset===0;
+  const cycleDone = isCurrentCycle && isCurrentCycleDone();
   const twoMonthsAgo = new Date(cd);
   twoMonthsAgo.setMonth(twoMonthsAgo.getMonth()-2);
   const gcEl = document.getElementById('ghost-calc-info');
   if (gcEl) gcEl.textContent = `기산일: ${formatDate(cd)} | 대상: ${formatDate(twoMonthsAgo)} ~ ${formatDate(cd)}`;
   const resetBtn = document.getElementById('reset-btn');
+  const doneBtn = document.getElementById('ghost-done-btn');
   const alertEl = document.getElementById('ghost-alert-area');
-  if (alertEl) alertEl.innerHTML = ghostSelectedOffset===-1
-    ? `<div class="alert alert-info"><i class="ti ti-clock"></i>다음 정리일까지 <strong>${daysBetween(TODAY,cd)}일</strong> 남았습니다. 현재는 미리보기입니다.</div>`
-    : isCurrentCycle
-      ? (isExactlyToday
-          ? `<div class="alert alert-danger"><i class="ti ti-alert-triangle"></i><div><strong>오늘이 정리일입니다.</strong> 목록 확인 후 조치 완료 시 초기화를 실행하세요.</div></div>`
-          : `<div class="alert alert-danger"><i class="ti ti-alert-triangle"></i><div><strong>이번 정리 주기입니다 (기산일 ${formatDate(cd)}).</strong> 목록 확인 후 조치 완료 시 초기화를 실행하세요.</div></div>`)
-      : `<div class="alert alert-info"><i class="ti ti-history"></i>지난 정리 주기(기산일 ${formatDate(cd)})를 조회 중입니다. 참고용입니다.</div>`;
-  if (resetBtn) resetBtn.style.display = isCurrentCycle ? '' : 'none';
+  if (alertEl) alertEl.innerHTML = offset===-1
+    ? `<div class="alert alert-info"><i class="ti ti-clock"></i><div>다음 정리일(${formatDate(cd)})까지 <strong>${daysUntil(toDateStr(cd))}일</strong> 남았습니다. 지금 기록 기준으로 미리 본 목록이에요.${isCurrentCycleDone()?' <span style="opacity:.8">(이번 정리는 완료 ✓)</span>':''}</div></div>`
+    : cycleDone
+      ? `<div class="alert alert-success"><i class="ti ti-circle-check"></i><div><strong>이번 정리(기산일 ${formatDate(cd)})는 완료됐어요.</strong> 초기화 이후에는 연락 완료로 유예했던 회원도 다시 대상으로 보일 수 있으니 참고용으로만 보세요. 다음 정리 대상은 "다음 정리 예정"에서 확인할 수 있어요.</div></div>`
+      : isCurrentCycle
+        ? `<div class="alert alert-danger"><i class="ti ti-alert-triangle"></i><div><strong>${isExactlyToday?'오늘이 정리일입니다.':`이번 정리 주기입니다 (기산일 ${formatDate(cd)}).`}</strong> 목록 확인 후 조치를 마치면 초기화를 실행하세요. 초기화하면 이번 정리가 완료로 표시되고, 대시보드·회원 명단이 다음 정리 기준으로 바뀌어요.</div></div>`
+        : `<div class="alert alert-info"><i class="ti ti-history"></i>지난 정리 주기(기산일 ${formatDate(cd)})를 조회 중입니다. 참고용입니다.</div>`;
+  if (resetBtn) resetBtn.style.display = isCurrentCycle && !cycleDone ? '' : 'none';
+  if (doneBtn) doneBtn.style.display = isCurrentCycle && !cycleDone ? '' : 'none';
   const ghostList = members.filter(m=>getMemberStatus(m,cd)==='ghost');
   const warnList = members.filter(m=>getMemberStatus(m,cd)==='contacted');
   const tableEl = document.getElementById('ghost-table-area');
@@ -1872,14 +2294,14 @@ function renderGhost() {
         const la=m.lastAttend?new Date(m.lastAttend):null;
         const c2=(!la||la<twoMonthsAgo)?'<span style="color:var(--danger)">✗ 미참여</span>':'<span style="color:var(--success)">✓ 참여</span>';
         const c3=m.contacted?'<span style="color:var(--success)">✓ 연락</span>':'<span style="color:var(--danger)">✗ 미연락</span>';
-        html+=`<tr class="member-row-ghost"><td><strong>${m.name}</strong></td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'없음'}</td><td>${c1}</td><td>${c2}</td><td>${c3}</td></tr>`;
+        html+=`<tr class="member-row-ghost"><td><strong>${esc(m.name)}</strong></td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'없음'}</td><td>${c1}</td><td>${c2}</td><td>${c3}</td></tr>`;
       });
       html += '</tbody></table></div>';
     }
     if (warnList.length>0) {
       html += `<div class="section-label">연락 완료 — 유예 (${warnList.length}명)</div>`;
       html += '<div style="border:0.5px solid var(--warn-border);border-radius:var(--radius-lg);overflow-x:auto"><table style="min-width:320px"><thead><tr><th>이름</th><th>가입일</th><th>마지막 참여</th></tr></thead><tbody>';
-      warnList.forEach(m=>{html+=`<tr><td><strong>${m.name}</strong></td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'없음'}</td></tr>`;});
+      warnList.forEach(m=>{html+=`<tr><td><strong>${esc(m.name)}</strong></td><td>${formatDate(m.joinDate)}</td><td>${m.lastAttend?formatDate(m.lastAttend):'없음'}</td></tr>`;});
       html += '</tbody></table></div>';
     }
   }
@@ -1893,10 +2315,8 @@ window.onGhostPeriodChange = function(v) {
 function renderStats() {
   const el = document.getElementById('stats-content');
   if (!el) return;
-  const cd = getCalcDate();
-  const twoMonthsAgo = new Date(cd);
-  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth()-2);
-  const recentBungCount = bungs.filter(b => new Date(b.date) >= twoMonthsAgo && new Date(b.date) <= TODAY).length;
+  const twoMonthsAgo = parseDateStr(recentWindowStartStr());
+  const recentBungCount = getRecentBungs().length;
   const stats = getRecentMemberStats();
   if (members.length===0) { el.innerHTML='<div class="empty-state"><i class="ti ti-chart-bar"></i>벙과 회원 데이터가 있어야 통계를 볼 수 있어요.</div>'; return; }
   if (recentBungCount===0) { el.innerHTML='<div class="empty-state"><i class="ti ti-chart-bar"></i>최근 2개월간 진행된 벙이 없어요.<br><span style="font-size:12px">전체 역대 기록은 명예의 전당에서 확인하세요.</span></div>'; return; }
@@ -1904,7 +2324,7 @@ function renderStats() {
   const medals = ['🥇','🥈','🥉'];
   const gradeCount = {우수:stats.filter(s=>s.rate>=60).length, 활동:stats.filter(s=>s.rate>=20&&s.rate<60).length, 일반:stats.filter(s=>s.rate<20).length};
   el.innerHTML = `
-  <div class="alert alert-info" style="margin-bottom:1.25rem"><i class="ti ti-info-circle"></i>최근 2개월(${formatDate(twoMonthsAgo)} ~ ${formatDate(TODAY)}, 유령 판정 기준과 동일) 활동성 통계입니다. 전체 역대 기록은 <strong>명예의 전당</strong>을 확인하세요.</div>
+  <div class="alert alert-info" style="margin-bottom:1.25rem"><i class="ti ti-info-circle"></i>최근 2개월(${formatDate(twoMonthsAgo)} ~ ${formatDate(TODAY)}) 활동성 통계입니다. 유령 판정 대상은 <strong>유령 정리</strong> 탭, 전체 역대 기록은 <strong>명예의 전당</strong>을 확인하세요.</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:1.5rem">
     <div class="metric"><div class="metric-label">최근 2개월 벙</div><div class="metric-value">${recentBungCount}회</div></div>
     <div class="metric"><div class="metric-label">⭐ 우수</div><div class="metric-value" style="color:var(--success)">${gradeCount.우수}명</div></div>
@@ -1915,7 +2335,7 @@ function renderStats() {
     <div style="display:flex;flex-direction:column;gap:8px">
       ${top3.length===0?'<div style="font-size:13px;color:var(--text2)">최근 2개월 참여 기록이 없습니다.</div>':top3.map((s,i)=>`<div style="display:flex;align-items:center;gap:12px;background:var(--bg2);border-radius:var(--radius-lg);padding:10px 16px">
         <span style="font-size:20px">${medals[i]}</span>
-        <div style="flex:1"><div style="font-weight:500">${s.name} <span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${s.grade.bg};color:${s.grade.color};font-weight:500">${s.grade.label}</span></div>
+        <div style="flex:1"><div style="font-weight:500">${esc(s.name)} <span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${s.grade.bg};color:${s.grade.color};font-weight:500">${s.grade.label}</span></div>
         <div style="font-size:12px;color:var(--text2);margin-top:2px">${s.attended}회 / 최근 ${recentBungCount}회</div></div>
         <div style="font-size:20px;font-weight:500;color:${s.grade.color}">${s.rate}%</div>
       </div>`).join('')}
@@ -1924,10 +2344,10 @@ function renderStats() {
   <div><h3>전체 회원 최근 2개월 참여율</h3>
     <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto">
       <table style="min-width:480px"><thead><tr><th>순위</th><th>이름</th><th>등급</th><th>참석</th><th>참여율</th><th>그래프</th></tr></thead><tbody>
-      ${stats.map((s,i)=>`<tr><td style="color:var(--text2)">${i+1}</td><td><strong>${s.name}</strong></td>
+      ${stats.map((s,i)=>`<tr><td style="color:var(--text2)">${i+1}</td><td><strong>${esc(s.name)}</strong></td>
         <td><span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${s.grade.bg};color:${s.grade.color};font-weight:500">${s.grade.label}</span></td>
         <td>${s.attended}회</td><td style="font-weight:500;color:${s.grade.color}">${s.rate}%</td>
-        <td style="min-width:80px"><div style="background:var(--bg3);border-radius:4px;height:8px;overflow:hidden"><div style="width:${s.rate}%;background:${s.grade.color};height:100%;border-radius:4px"></div></div></td>
+        <td style="min-width:80px"><div style="background:var(--bg3);border-radius:4px;height:8px;overflow:hidden"><div class="bar-fill" style="width:${s.rate}%;background:${s.grade.color};height:100%;border-radius:4px;animation-delay:${Math.min(i,12)*30}ms"></div></div></td>
       </tr>`).join('')}
       </tbody></table>
     </div>
@@ -1969,7 +2389,7 @@ function renderReport() {
         const m=monthMap[k];const avg=m.count>0?Math.round(m.attendTotal/m.count):0;const [y,mo]=k.split('-');
         return `<tr><td><strong>${y}년 ${parseInt(mo)}월</strong></td><td>${m.count}회</td>
           <td><span class="badge badge-jeongmo">${m.jeongmo}</span></td><td><span class="badge badge-bungae">${m.bungae}</span></td><td>${avg}명</td>
-          <td style="min-width:100px"><div style="background:var(--bg3);border-radius:4px;height:8px;overflow:hidden"><div style="width:${Math.round(m.count/maxCount*100)}%;background:var(--info);height:100%;border-radius:4px"></div></div></td>
+          <td style="min-width:100px"><div style="background:var(--bg3);border-radius:4px;height:8px;overflow:hidden"><div class="bar-fill" style="width:${Math.round(m.count/maxCount*100)}%;background:var(--info);height:100%;border-radius:4px"></div></div></td>
         </tr>`;
       }).join('')}
       </tbody></table>
@@ -1994,19 +2414,24 @@ function renderHall() {
   const top3 = stats.slice(0,3);
   const medals = ['🥇','🥈','🥉'];
   const thisMonth = `${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,'0')}`;
-  const thisMonthBungs = bungs.filter(b=>b.date.startsWith(thisMonth)&&b.hostId);
+  const thisMonthBungs = bungs.filter(b=>(b.date||'').startsWith(thisMonth)&&b.hostId);
   const hostCount = {};
   thisMonthBungs.forEach(b=>{hostCount[b.hostId]=(hostCount[b.hostId]||0)+1;});
   const topHostId = Object.keys(hostCount).sort((a,b)=>hostCount[b]-hostCount[a])[0];
   const topHost = topHostId ? members.find(x=>x.id===topHostId) : null;
-  const anniversaries = members.filter(m=>{
-    if (!m.joinDate) return false;
-    const join=new Date(m.joinDate);const years=TODAY.getFullYear()-join.getFullYear();if(years<1)return false;
-    const anniv=new Date(TODAY.getFullYear(),join.getMonth(),join.getDate());
-    return Math.abs(daysBetween(TODAY,anniv))<=7;
-  }).map(m=>({...m,years:TODAY.getFullYear()-new Date(m.joinDate).getFullYear()}));
+  // 앞뒤 7일 이내 가입 기념일 (연말·연초에 걸쳐도 잡히도록 작년/올해/내년 기념일 중 가장 가까운 날 기준)
+  const today0 = parseDateStr(todayStr());
+  const anniversaries = members.map(m=>{
+    if (!m.joinDate) return null;
+    const join = parseDateStr(m.joinDate);
+    const near = [-1,0,1].map(dy => new Date(today0.getFullYear()+dy, join.getMonth(), join.getDate()))
+      .sort((a,b) => Math.abs(a-today0) - Math.abs(b-today0))[0];
+    const years = near.getFullYear() - join.getFullYear();
+    if (years < 1 || Math.abs(Math.round((near-today0)/86400000)) > 7) return null;
+    return {...m, years};
+  }).filter(Boolean);
+  const sortedB=[...bungs].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   const streakRanking = members.map(m=>{
-    const sortedB=[...bungs].sort((a,b)=>new Date(a.date)-new Date(b.date));
     let max=0,cur=0;
     sortedB.forEach(b=>{if((b.attendees||[]).includes(m.id)){cur++;if(cur>max)max=cur;}else cur=0;});
     return{...m,maxStreak:max};
@@ -2019,7 +2444,7 @@ function renderHall() {
   for(let i=0;i<6;i++){
     const d=new Date(TODAY.getFullYear(),TODAY.getMonth()-i,1);
     const ym=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    const mb=bungs.filter(b=>b.date.startsWith(ym));if(mb.length===0)continue;
+    const mb=bungs.filter(b=>(b.date||'').startsWith(ym));if(mb.length===0)continue;
     const ac={};mb.forEach(b=>(b.attendees||[]).forEach(id=>{ac[id]=(ac[id]||0)+1;}));
     const topId=Object.keys(ac).sort((a,b)=>ac[b]-ac[a])[0];
     const mvp=topId?members.find(x=>x.id===topId):null;
@@ -2028,13 +2453,13 @@ function renderHall() {
   el.innerHTML = `
   <div class="hall-card"><h3>👑 이달의 벙주 (${TODAY.getMonth()+1}월)</h3>
     ${topHost?`<div style="display:flex;align-items:center;gap:16px;padding:8px 0">
-      ${topHost.photoURL?`<img src="${topHost.photoURL}" style="width:52px;height:52px;border-radius:50%;object-fit:cover">`:`<div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--warn-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:500">${topHost.name[0]}</div>`}
-      <div><div style="font-size:18px;font-weight:500">${topHost.name}</div><div style="font-size:13px;color:var(--text2);margin-top:3px">이번 달 ${hostCount[topHostId]}회 벙주</div></div>
+      ${topHost.photoURL?`<img src="${esc(topHost.photoURL)}" style="width:52px;height:52px;border-radius:50%;object-fit:cover">`:`<div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--warn-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:500">${esc([...topHost.name][0]||'')}</div>`}
+      <div><div style="font-size:18px;font-weight:500">${esc(topHost.name)}</div><div style="font-size:13px;color:var(--text2);margin-top:3px">이번 달 ${hostCount[topHostId]}회 벙주</div></div>
       <div style="margin-left:auto;font-size:36px">👑</div></div>`:'<div style="font-size:13px;color:var(--text2);padding:8px 0">이번 달 벙주 기록 없음</div>'}
   </div>
   ${anniversaries.length>0?`<div class="hall-card"><h3>🎂 이번 주 가입 기념일</h3>
     ${anniversaries.map(m=>`<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:0.5px solid var(--border)">
-      <span style="font-size:24px">🎉</span><div><strong>${m.name}</strong><span class="anniversary-badge">${m.years}주년</span>
+      <span style="font-size:24px">🎉</span><div><strong>${esc(m.name)}</strong><span class="anniversary-badge">${m.years}주년</span>
       <div style="font-size:12px;color:var(--text2)">가입일: ${formatDate(m.joinDate)}</div></div></div>`).join('')}
   </div>`:''}
   <div class="hall-card"><h3>🏆 역대 참여율 명예의 전당</h3>
@@ -2042,31 +2467,31 @@ function renderHall() {
     `<div style="display:flex;flex-direction:column;gap:10px">${top3.map((s,i)=>`
       <div style="display:flex;align-items:center;gap:14px;background:var(--bg3);border-radius:var(--radius-lg);padding:12px 14px">
         <div style="font-size:28px">${medals[i]}</div>
-        <div style="flex:1"><div style="font-weight:500">${s.name} <span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${s.grade.bg};color:${s.grade.color};font-weight:500">${s.grade.label}</span></div>
+        <div style="flex:1"><div style="font-weight:500">${esc(s.name)} <span style="font-size:11px;padding:2px 8px;border-radius:var(--radius);background:${s.grade.bg};color:${s.grade.color};font-weight:500">${s.grade.label}</span></div>
         <div style="font-size:12px;color:var(--text2);margin-top:2px">${s.attended}회 / 전체 ${bungs.length}회</div>
-        <div style="background:var(--bg);border-radius:4px;height:5px;overflow:hidden;margin-top:6px"><div style="width:${s.rate}%;background:${s.grade.color};height:100%;border-radius:4px"></div></div></div>
+        <div style="background:var(--bg);border-radius:4px;height:5px;overflow:hidden;margin-top:6px"><div class="bar-fill" style="width:${s.rate}%;background:${s.grade.color};height:100%;border-radius:4px;animation-delay:${i*80}ms"></div></div></div>
         <div style="font-size:22px;font-weight:500;color:${s.grade.color}">${s.rate}%</div>
       </div>`).join('')}</div>`}
   </div>
   ${streakRanking.length>0?`<div class="hall-card"><h3>🔥 연속 참석 스트릭 랭킹</h3>
     <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto">
       <table style="min-width:380px"><thead><tr><th>순위</th><th>이름</th><th>최장 연속</th><th>그래프</th></tr></thead><tbody>
-      ${streakRanking.map((m,i)=>`<tr><td style="color:var(--text2)">${i+1}</td><td><strong>${m.name}</strong></td>
+      ${streakRanking.map((m,i)=>`<tr><td style="color:var(--text2)">${i+1}</td><td><strong>${esc(m.name)}</strong></td>
         <td style="color:var(--warn);font-weight:500">${m.maxStreak}회</td>
-        <td style="min-width:80px"><div style="background:var(--bg3);border-radius:4px;height:7px;overflow:hidden"><div style="width:${Math.round(m.maxStreak/streakRanking[0].maxStreak*100)}%;background:var(--warn);height:100%;border-radius:4px"></div></div></td>
+        <td style="min-width:80px"><div style="background:var(--bg3);border-radius:4px;height:7px;overflow:hidden"><div class="bar-fill" style="width:${Math.round(m.maxStreak/streakRanking[0].maxStreak*100)}%;background:var(--warn);height:100%;border-radius:4px;animation-delay:${i*60}ms"></div></div></td>
       </tr>`).join('')}
       </tbody></table></div></div>`:''}
   ${hostRanking.length>0?`<div class="hall-card"><h3>🎙️ 벙주 랭킹</h3>
     <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto">
       <table style="min-width:340px"><thead><tr><th>순위</th><th>이름</th><th>전체</th><th>정모</th></tr></thead><tbody>
-      ${hostRanking.map((m,i)=>`<tr><td>${i===0?'👑':i===1?'🥈':i===2?'🥉':i+1}</td><td><strong>${m.name}</strong></td>
+      ${hostRanking.map((m,i)=>`<tr><td>${i===0?'👑':i===1?'🥈':i===2?'🥉':i+1}</td><td><strong>${esc(m.name)}</strong></td>
         <td style="font-weight:500">${m.hosted}회</td><td style="color:var(--info)">${m.jeongmoHosted}회</td></tr>`).join('')}
       </tbody></table></div></div>`:''}
   ${monthMVPs.length>0?`<div class="hall-card"><h3>📅 월별 MVP 히스토리</h3>
     <div style="display:flex;flex-direction:column;gap:8px">${monthMVPs.map(m=>`
       <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:0.5px solid var(--border)">
         <div style="font-size:12px;color:var(--text2);min-width:80px">${m.ym}</div>
-        <div style="flex:1;padding:0 12px"><strong>${m.name}</strong></div>
+        <div style="flex:1;padding:0 12px"><strong>${esc(m.name)}</strong></div>
         <div style="font-size:12px;color:var(--text2)">${m.count}/${m.total}회</div>
       </div>`).join('')}</div></div>`:''}
   ${renderSeasonAwardsCard()}
@@ -2075,7 +2500,7 @@ function renderHall() {
     '<div style="display:flex;flex-direction:column;gap:4px">'+
     members.map(m=>{const achvs=getAchievements(m);const unlocked=achvs.filter(a=>a.unlocked);if(unlocked.length===0)return '';
       return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border)">
-        <div style="font-size:13px;font-weight:500;min-width:60px">${m.name}</div>
+        <div style="font-size:13px;font-weight:500;min-width:60px">${esc(m.name)}</div>
         <div style="display:flex;gap:5px;flex-wrap:wrap;flex:1">${achvs.map(a=>{const lh=a.hidden&&!a.unlocked;return `<span title="${lh?'???':a.label}" style="font-size:17px;${a.unlocked?'':'opacity:0.2;filter:grayscale(1)'}">${lh?'❓':a.icon}</span>`;}).join('')}</div>
         <div style="font-size:11px;color:var(--text2)">${unlocked.length}/${achvs.length}</div></div>`;
     }).join('')+'</div>'}
@@ -2092,11 +2517,13 @@ function renderCalendar() {
   const weekdays=['일','월','화','수','목','금','토'];
   const ym=`${y}-${String(m+1).padStart(2,'0')}`;
   const monthBungs=bungs.filter(b=>b.date&&b.date.startsWith(ym));
+  const isCurMonth = TODAY.getFullYear()===y && TODAY.getMonth()===m;
   let html=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-    <button class="btn btn-sm" onclick="calNav(-1)"><i class="ti ti-chevron-left"></i></button>
-    <div style="font-size:16px;font-weight:500">${y}년 ${m+1}월</div>
-    <button class="btn btn-sm" onclick="calNav(1)"><i class="ti ti-chevron-right"></i></button>
+    <button class="btn btn-sm" onclick="calNav(-1)" aria-label="이전 달"><i class="ti ti-chevron-left"></i></button>
+    <div class="flex" style="gap:8px"><div style="font-size:16px;font-weight:500">${y}년 ${m+1}월</div>${isCurMonth?'':'<button class="btn btn-sm" onclick="calToday()">오늘</button>'}</div>
+    <button class="btn btn-sm" onclick="calNav(1)" aria-label="다음 달"><i class="ti ti-chevron-right"></i></button>
   </div>
+  ${isAdmin?'<div style="font-size:11px;color:var(--text3);margin:-8px 0 10px;text-align:center">날짜를 누르면 그날 벙을 바로 추가할 수 있어요</div>':''}
   <div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem;margin-bottom:1rem">
     <div class="cal-grid" style="margin-bottom:4px">${weekdays.map(d=>`<div class="cal-header">${d}</div>`).join('')}</div>
     <div class="cal-grid">`;
@@ -2105,7 +2532,7 @@ function renderCalendar() {
     const dateStr=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const isToday=TODAY.getFullYear()===y&&TODAY.getMonth()===m&&TODAY.getDate()===d;
     const dayBungs=bungs.filter(b=>b.date===dateStr);
-    html+=`<div class="cal-day${isToday?' today':''}"><div class="cal-day-num">${d}</div>${dayBungs.map(b=>`<div class="cal-event ${b.type==='번개'?'bungae':'jeongmo'}" onclick="showCalBungDetail('${b.id}')" title="${b.name}">${b.name}</div>`).join('')}</div>`;
+    html+=`<div class="cal-day${isToday?' today':''}${isAdmin?' clickable':''}"${isAdmin?` onclick="openAddBung('${dateStr}')"`:''}><div class="cal-day-num">${d}</div>${dayBungs.map(b=>`<div class="cal-event ${b.type==='번개'?'bungae':'jeongmo'}" onclick="event.stopPropagation();showCalBungDetail('${b.id}')" title="${esc(b.name)}">${esc(b.name)}</div>`).join('')}</div>`;
   }
   const remaining=(7-((firstDay+daysInMonth)%7))%7;
   for(let d=1;d<=remaining;d++) html+=`<div class="cal-day other-month"><div class="cal-day-num">${d}</div></div>`;
@@ -2113,13 +2540,13 @@ function renderCalendar() {
   if(monthBungs.length>0){
     html+=`<div style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
       <div style="font-size:13px;font-weight:500;margin-bottom:10px">${m+1}월 벙 목록</div>
-      ${monthBungs.sort((a,b)=>new Date(a.date)-new Date(b.date)).map(b=>{
+      ${monthBungs.sort((a,b)=>a.date.localeCompare(b.date)).map(b=>{
         const host=b.hostId?members.find(x=>x.id===b.hostId):null;
-        const isPast=new Date(b.date)<=TODAY;
-        return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:0.5px solid var(--border)">
+        const isPast=b.date<=todayStr();
+        return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:0.5px solid var(--border);cursor:pointer" onclick="showCalBungDetail('${b.id}')">
           ${b.type==='번개'?'<span class="badge badge-bungae">번개</span>':'<span class="badge badge-jeongmo">정모</span>'}
-          <div style="flex:1"><div style="font-size:13px;font-weight:500">${b.name}</div>
-          <div style="font-size:12px;color:var(--text2);margin-top:2px">${formatDate(b.date)}${b.place?` · ${b.place}`:''}${host?` · 벙주: ${host.name}`:''}</div></div>
+          <div style="flex:1"><div style="font-size:13px;font-weight:500">${esc(b.name)}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px">${formatDate(b.date)}${b.place?` · ${esc(b.place)}`:''}${host?` · 벙주: ${esc(host.name)}`:''}</div></div>
           <div style="font-size:12px;color:var(--text2)">${isPast?(b.attendees||[]).length+'명':'예정'}</div></div>`;
       }).join('')}</div>`;
   }
@@ -2131,22 +2558,23 @@ function renderProfileList() {
   if(!el)return;
   if(selectedMemberId){renderMemberProfile(selectedMemberId);return;}
   if(members.length===0){el.innerHTML='<div class="empty-state"><i class="ti ti-users"></i>등록된 회원이 없습니다.</div>';return;}
-  const sorted=[...members].sort((a,b)=>a.name.localeCompare(b.name,'ko'));
-  el.innerHTML=`<div style="margin-bottom:12px"><input type="text" placeholder="회원 검색..." oninput="filterProfileList(this.value)" style="width:100%;max-width:300px"></div>
+  const sorted=sortMembersByName(members);
+  el.innerHTML=`<div style="margin-bottom:12px"><input type="search" id="profile-search-input" placeholder="이름·별명 검색" value="${esc(profileSearchQuery)}" oninput="filterProfileList(this.value)" style="width:100%;max-width:300px"></div>
   <div id="profile-list-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">
     ${sorted.map(m=>{
       const attended=bungs.filter(b=>(b.attendees||[]).includes(m.id)).length;
       const rate=bungs.length>0?Math.round(attended/bungs.length*100):0;
       const grade=getMemberGrade(rate);
       const achvCount=getAchievements(m).filter(a=>a.unlocked).length;
-      return `<div onclick="openProfile('${m.id}')" style="background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem;cursor:pointer" onmouseover="this.style.borderColor='var(--text2)'" onmouseout="this.style.borderColor='var(--border)'">
-        ${m.photoURL?`<img src="${m.photoURL}" style="width:44px;height:44px;border-radius:50%;object-fit:cover;margin-bottom:8px">`:`<div style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:500;margin-bottom:8px">${m.name[0]}</div>`}
-        <div style="font-size:13px;font-weight:500;margin-bottom:4px">${m.name}</div>
+      return `<div class="profile-grid-card" data-search="${esc(memberKeys(m).join('|'))}" onclick="openProfile('${m.id}')">
+        ${m.photoURL?`<img src="${esc(m.photoURL)}" style="width:44px;height:44px;border-radius:50%;object-fit:cover;margin-bottom:8px">`:`<div style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:500;margin-bottom:8px">${esc([...(m.name||'?')][0])}</div>`}
+        <div style="font-size:13px;font-weight:500;margin-bottom:4px">${esc(m.name)}</div>
         <div style="font-size:11px;padding:2px 6px;border-radius:var(--radius);background:${grade.bg};color:${grade.color};font-weight:500;display:inline-block;margin-bottom:6px">${grade.label}</div>
         <div style="font-size:11px;color:var(--text2)">${rate}% · 업적 ${achvCount}개</div>
       </div>`;
     }).join('')}
   </div>`;
+  if (profileSearchQuery) filterProfileList(profileSearchQuery);
 }
 
 function renderMemberProfile(id) {
@@ -2159,9 +2587,8 @@ function renderMemberProfile(id) {
   const hosted=bungs.filter(b=>b.hostId===m.id);
   const achvs=getAchievements(m);
   const unlocked=achvs.filter(a=>a.unlocked);
-  const joinDate=new Date(m.joinDate);
-  const daysSinceJoin=daysBetween(joinDate,TODAY);
-  const sortedBungs=[...bungs].sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const daysSinceJoin=m.joinDate?daysBetween(parseDateStr(m.joinDate),parseDateStr(todayStr())):0;
+  const sortedBungs=[...bungs].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   let maxStreak=0,curStreak=0;
   sortedBungs.forEach(b=>{if((b.attendees||[]).includes(m.id)){curStreak++;if(curStreak>maxStreak)maxStreak=curStreak;}else curStreak=0;});
   const monthlyData=[];
@@ -2172,22 +2599,24 @@ function renderMemberProfile(id) {
     monthlyData.push({label:`${d.getMonth()+1}월`,total:mb.length,attend:mb.filter(b=>(b.attendees||[]).includes(m.id)).length});
   }
   const maxMonthly=Math.max(...monthlyData.map(d=>d.total),1);
-  const attendedBungs=[...attended].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const attendedBungs=[...attended].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const isMyProfile = currentUser && m.linkedUid === currentUser.uid;
+  const aliases = memberAliases(m);
   el.innerHTML=`
   <div style="margin-bottom:12px;display:flex;justify-content:space-between"><button class="btn btn-sm" onclick="backToProfileList()"><i class="ti ti-arrow-left"></i> 목록으로</button>
   ${isMyProfile?`<button class="btn btn-sm btn-primary" onclick="openEditMyProfile('${m.id}')"><i class="ti ti-edit"></i> 내 프로필 수정</button>`:''}</div>
   <div class="profile-card">
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
-      ${m.photoURL?`<img src="${m.photoURL}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;flex-shrink:0">`:`<div class="profile-avatar">${m.name[0]}</div>`}
-      <div><div style="font-size:20px;font-weight:500">${m.name}</div>
+      ${m.photoURL?`<img src="${esc(m.photoURL)}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;flex-shrink:0">`:`<div class="profile-avatar">${esc([...(m.name||'?')][0])}</div>`}
+      <div><div style="font-size:20px;font-weight:500">${esc(m.name)}</div>
+      ${aliases.length?`<div style="margin-top:3px">${aliases.map(a=>`<span class="alias-chip">${esc(a)}</span>`).join('')}</div>`:''}
       <div style="margin-top:4px"><span style="font-size:12px;padding:3px 10px;border-radius:20px;background:${grade.bg};color:${grade.color};font-weight:500">${grade.label}</span></div>
-      ${m.memo?`<div style="font-size:12px;color:var(--text2);margin-top:6px">📝 ${m.memo}</div>`:''}
+      ${m.memo?`<div style="font-size:12px;color:var(--text2);margin-top:6px">📝 ${esc(m.memo)}</div>`:''}
     </div></div>
-    ${m.bio?`<div style="font-size:13px;line-height:1.7;background:var(--bg2);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px">${m.bio}</div>`:''}
+    ${m.bio?`<div style="font-size:13px;line-height:1.7;background:var(--bg2);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px">${esc(m.bio)}</div>`:''}
     ${(m.favSong||m.favArtist)?`<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin-bottom:12px">
-      ${m.favArtist?`<span><i class="ti ti-microphone-2" style="color:var(--purple)"></i> 최애 아티스트: <strong style="color:var(--text)">${m.favArtist}</strong></span>`:''}
-      ${m.favSong?`<span><i class="ti ti-music" style="color:var(--info)"></i> 최애곡: <strong style="color:var(--text)">${m.favSong}</strong></span>`:''}
+      ${m.favArtist?`<span><i class="ti ti-microphone-2" style="color:var(--purple)"></i> 최애 아티스트: <strong style="color:var(--text)">${esc(m.favArtist)}</strong></span>`:''}
+      ${m.favSong?`<span><i class="ti ti-music" style="color:var(--info)"></i> 최애곡: <strong style="color:var(--text)">${esc(m.favSong)}</strong></span>`:''}
     </div>`:''}
     <div class="profile-stat-grid">
       <div style="background:var(--bg2);border-radius:var(--radius);padding:10px;text-align:center"><div style="font-size:20px;font-weight:500;color:var(--info)">${rate}%</div><div style="font-size:11px;color:var(--text2);margin-top:2px">참여율</div></div>
@@ -2222,7 +2651,7 @@ function renderMemberProfile(id) {
     ${sortedBungs.length===0?'<div style="font-size:13px;color:var(--text2)">아직 벙 기록이 없습니다.</div>':
     `<div style="display:flex;flex-wrap:wrap;gap:4px">${sortedBungs.map(b=>{
       const did=(b.attendees||[]).includes(m.id);
-      return `<div title="${formatDate(b.date)} ${b.name}${did?' · 참석':' · 불참'}" style="width:13px;height:13px;border-radius:3px;background:${did?'var(--info)':'var(--bg3)'}"></div>`;
+      return `<div title="${formatDate(b.date)} ${esc(b.name)}${did?' · 참석':' · 불참'}" style="width:13px;height:13px;border-radius:3px;background:${did?'var(--info)':'var(--bg3)'}"></div>`;
     }).join('')}</div>`}
   </div>
   ${(()=>{
@@ -2241,8 +2670,8 @@ function renderMemberProfile(id) {
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         ${coRanking.map((c,i)=>`<div style="display:flex;align-items:center;gap:8px;background:var(--bg2);border-radius:var(--radius);padding:8px 12px">
           <span style="font-size:13px">${['🥇','🥈','🥉'][i]}</span>
-          ${c.photoURL?`<img src="${c.photoURL}" style="width:28px;height:28px;border-radius:50%;object-fit:cover">`:`<div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500">${c.name[0]}</div>`}
-          <div><div style="font-size:12px;font-weight:500">${c.name}</div><div style="font-size:11px;color:var(--text2)">${c.count}번 같이 참석</div></div>
+          ${c.photoURL?`<img src="${esc(c.photoURL)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover">`:`<div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--purple-bg),var(--info-bg));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500">${esc([...(c.name||'?')][0])}</div>`}
+          <div><div style="font-size:12px;font-weight:500">${esc(c.name)}</div><div style="font-size:11px;color:var(--text2)">${c.count}번 같이 참석</div></div>
         </div>`).join('')}
       </div>
     </div>`;
@@ -2269,9 +2698,9 @@ function renderMemberProfile(id) {
     `<div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto">
       <table style="min-width:400px"><thead><tr><th>날짜</th><th>벙 이름</th><th>구분</th><th>장소</th></tr></thead><tbody>
       ${attendedBungs.slice(0,20).map(b=>`<tr>
-        <td style="color:var(--text2)">${formatDate(b.date)}</td><td><strong>${b.name}</strong></td>
+        <td style="color:var(--text2)">${formatDate(b.date)}</td><td><strong>${esc(b.name)}</strong></td>
         <td>${b.type==='번개'?'<span class="badge badge-bungae">번개</span>':'<span class="badge badge-jeongmo">정모</span>'}</td>
-        <td style="color:var(--text2)">${b.place||'-'}</td></tr>`).join('')}
+        <td style="color:var(--text2)">${esc(b.place||'-')}</td></tr>`).join('')}
       </tbody></table></div>`}
   </div>
   <div class="profile-card">
@@ -2307,7 +2736,7 @@ function renderTournamentsCard() {
       const totalRounds=Math.log2(t.candidates.length);
       const roundLabel=roundNames[totalRounds-1-((totalRounds-1)-t.currentRound)]||`${t.currentRound+1}라운드`;
       return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px;flex-wrap:wrap;gap:8px">
-        <div style="min-width:0"><div style="font-size:13px;font-weight:500">🎶 ${t.title}</div><div style="font-size:11px;color:var(--text2);margin-top:2px">${roundLabel} 진행 중 · 후보 ${t.candidates.length}곡</div></div>
+        <div style="min-width:0"><div style="font-size:13px;font-weight:500">🎶 ${esc(t.title)}</div><div style="font-size:11px;color:var(--text2);margin-top:2px">${roundLabel} 진행 중 · 후보 ${t.candidates.length}곡</div></div>
         <div style="display:flex;gap:6px;flex-shrink:0">
           <button class="btn btn-sm btn-primary" onclick="openTournamentVote('${t.id}')">투표하기</button>
           ${isAdmin?`<button class="btn btn-sm" onclick="advanceTournamentRound('${t.id}')">다음 라운드</button>`:''}
@@ -2318,8 +2747,8 @@ function renderTournamentsCard() {
     ${done.length>0?`<div style="font-size:12px;font-weight:500;color:var(--text2);margin-top:14px;margin-bottom:6px">역대 우승곡</div>
     ${done.map(t=>`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:0.5px solid var(--border)">
       <span style="font-size:18px">🏆</span>
-      <div style="flex:1"><div style="font-size:13px;font-weight:500">${t.winner?.songName||'-'}${t.winner?.artistName?` <span style="color:var(--text2);font-weight:400">- ${t.winner.artistName}</span>`:''}</div>
-      <div style="font-size:11px;color:var(--text2)">${t.title}</div></div>
+      <div style="flex:1"><div style="font-size:13px;font-weight:500">${esc(t.winner?.songName||'-')}${t.winner?.artistName?` <span style="color:var(--text2);font-weight:400">- ${esc(t.winner.artistName)}</span>`:''}</div>
+      <div style="font-size:11px;color:var(--text2)">${esc(t.title)}</div></div>
     </div>`).join('')}`:''}
   `;
 }
@@ -2380,7 +2809,7 @@ window.openCreateTournament = function() {
     <div style="max-height:260px;overflow-y:auto;border:0.5px solid var(--border);border-radius:var(--radius);padding:8px;margin-bottom:14px">
       ${_tnPool.map((p,i)=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;font-size:13px">
         <input type="checkbox" class="tn-song-check" value="${i}">
-        <span>${p.songName}${p.artistName?` <span style="color:var(--text2)">- ${p.artistName}</span>`:''}</span>
+        <span>${esc(p.songName)}${p.artistName?` <span style="color:var(--text2)">- ${esc(p.artistName)}</span>`:''}</span>
       </label>`).join('')}
     </div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button>
@@ -2428,7 +2857,7 @@ function renderTournamentVoteModal() {
   const roundNames = {1:'결승',2:'4강',3:'8강',4:'16강'};
   const roundLabel = roundNames[remaining] || `${t.currentRound+1}라운드`;
   const myUid = currentUser ? currentUser.uid : null;
-  const html = `<div class="modal-title">🎶 ${t.title} · ${roundLabel}</div>
+  const html = `<div class="modal-title">🎶 ${esc(t.title)} · ${roundLabel}</div>
     <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px">
     ${round.map((match,mi)=>{
       const votesA = Object.values(match.votes||{}).filter(v=>v==='a').length;
@@ -2438,14 +2867,14 @@ function renderTournamentVoteModal() {
         <div style="display:flex;align-items:center;gap:8px">
           <div style="flex:1;display:flex;flex-direction:column;gap:4px">
             <button class="btn btn-sm" style="text-align:left;${myVote==='a'?'background:var(--info-bg);border-color:var(--info)':''}" onclick="castTournamentVote('${t.id}',${mi},'a')">
-              ${match.a.songName}${match.a.artistName?` <span style="color:var(--text2);font-size:11px">- ${match.a.artistName}</span>`:''}<br><span style="font-size:11px;color:var(--text2)">${votesA}표</span>
+              ${esc(match.a.songName)}${match.a.artistName?` <span style="color:var(--text2);font-size:11px">- ${esc(match.a.artistName)}</span>`:''}<br><span style="font-size:11px;color:var(--text2)">${votesA}표</span>
             </button>
             ${match.a.youtubeUrl?`<button class="btn btn-sm" style="font-size:11px" onclick="toggleTournamentPlayer('tn-yt-${mi}a','${getYoutubeId(match.a.youtubeUrl)}')"><i class="ti ti-player-play"></i> 들어보기</button><div id="tn-yt-${mi}a"></div>`:''}
           </div>
           <span style="font-size:11px;color:var(--text2)">VS</span>
           <div style="flex:1;display:flex;flex-direction:column;gap:4px">
             <button class="btn btn-sm" style="text-align:left;${myVote==='b'?'background:var(--info-bg);border-color:var(--info)':''}" onclick="castTournamentVote('${t.id}',${mi},'b')">
-              ${match.b.songName}${match.b.artistName?` <span style="color:var(--text2);font-size:11px">- ${match.b.artistName}</span>`:''}<br><span style="font-size:11px;color:var(--text2)">${votesB}표</span>
+              ${esc(match.b.songName)}${match.b.artistName?` <span style="color:var(--text2);font-size:11px">- ${esc(match.b.artistName)}</span>`:''}<br><span style="font-size:11px;color:var(--text2)">${votesB}표</span>
             </button>
             ${match.b.youtubeUrl?`<button class="btn btn-sm" style="font-size:11px" onclick="toggleTournamentPlayer('tn-yt-${mi}b','${getYoutubeId(match.b.youtubeUrl)}')"><i class="ti ti-player-play"></i> 들어보기</button><div id="tn-yt-${mi}b"></div>`:''}
           </div>
@@ -2455,8 +2884,7 @@ function renderTournamentVoteModal() {
     </div>
     <div style="font-size:11px;color:var(--text2);margin-bottom:10px">곡을 클릭해서 투표하세요. 다시 클릭하면 투표를 바꿀 수 있습니다.</div>
     <div class="flex" style="justify-content:flex-end"><button class="btn" onclick="closeTournamentVoteModal()">닫기</button></div>`;
-  document.getElementById('modal-content').innerHTML = html;
-  document.getElementById('modal-backdrop').classList.add('open');
+  openModal(html);
 }
 
 window.toggleTournamentPlayer = function(containerId, videoId) {
@@ -2562,13 +2990,13 @@ function renderIdealCupCard(c) {
   return `<div class="hall-card" style="padding:0;overflow:hidden">
     <div style="display:flex;height:160px">
       ${thumbs.map(t=>`<div style="flex:1;background:var(--bg2);overflow:hidden;display:flex;align-items:center;justify-content:center">
-        ${t.imageUrl?`<img src="${t.imageUrl}" style="width:100%;height:100%;object-fit:contain">`:t.youtubeUrl?`<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:20px"></i>`:`<i class="ti ti-photo-off" style="color:var(--text2);font-size:20px"></i>`}
+        ${t.imageUrl?`<img src="${esc(t.imageUrl)}" style="width:100%;height:100%;object-fit:contain" loading="lazy">`:t.youtubeUrl?`<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:20px"></i>`:`<i class="ti ti-photo-off" style="color:var(--text2);font-size:20px"></i>`}
       </div>`).join('')}
     </div>
     <div style="padding:10px 12px">
-      <div style="font-size:13px;font-weight:600;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.title}</div>
-      <div style="font-size:11px;color:var(--text2);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.description||''}</div>
-      <div style="font-size:11px;color:var(--text2);margin-bottom:8px">참가 ${(c.lineups||[]).length}개 · ${resolveAuthorName(c.creatorUid, c.creatorName)}</div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.title)}</div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.description||'')}</div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:8px">참가 ${(c.lineups||[]).length}개 · ${esc(resolveAuthorName(c.creatorUid, c.creatorName))}</div>
       <div class="flex" style="gap:6px;flex-wrap:nowrap">
         <button class="btn btn-sm btn-primary" style="white-space:nowrap" onclick="openIdealCupPlay('${c.id}')"><i class="ti ti-player-play"></i> 시작</button>
         <button class="btn btn-sm" style="white-space:nowrap" onclick="openIdealCupRanking('${c.id}')"><i class="ti ti-list"></i> 랭킹</button>
@@ -2604,8 +3032,8 @@ function loadIdealCupDraftIntoState(d) {
 function openIdealCupCreateModal(draftTitle, draftDesc) {
   _icUnsavedActive = true;
   openModal(`<div class="modal-title">🏆 이상형월드컵 만들기</div>
-    <input type="text" id="ic-title" placeholder="제목 (예: J-pop 솔로 가수 이상형월드컵)" value="${(draftTitle||'').replace(/"/g,'&quot;')}" style="width:100%;margin-bottom:8px">
-    <textarea id="ic-desc" placeholder="간단한 설명" style="width:100%;min-height:50px;margin-bottom:14px">${draftDesc||''}</textarea>
+    <input type="text" id="ic-title" placeholder="제목 (예: J-pop 솔로 가수 이상형월드컵)" value="${esc(draftTitle||'')}" style="width:100%;margin-bottom:8px">
+    <textarea id="ic-desc" placeholder="간단한 설명" style="width:100%;min-height:50px;margin-bottom:14px">${esc(draftDesc||'')}</textarea>
     <div style="font-size:12px;font-weight:600;margin-bottom:6px">라인업 추가 <span id="ic-lineup-count" style="color:var(--text2);font-weight:400">0개</span></div>
     <div style="border:0.5px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:10px">
       <input type="text" id="ic-ln-name" placeholder="이름 (예: 유우리, 또는 김치찌개를 끓이는 티라노사우르스)" style="width:100%;margin-bottom:6px">
@@ -2659,11 +3087,11 @@ window.openIdealCupDraftViewer = async function() {
   const lineups = d.lineups || [];
   const updated = d.updatedAt ? new Date(d.updatedAt.seconds*1000) : null;
   openModal(`<div class="modal-title">📝 임시저장</div>
-    <div style="font-size:14px;font-weight:600;margin-bottom:4px">${d.title || '(제목 없음)'}</div>
-    ${d.description?`<div style="font-size:12px;color:var(--text2);margin-bottom:8px">${d.description}</div>`:''}
+    <div style="font-size:14px;font-weight:600;margin-bottom:4px">${esc(d.title || '(제목 없음)')}</div>
+    ${d.description?`<div style="font-size:12px;color:var(--text2);margin-bottom:8px">${esc(d.description)}</div>`:''}
     <div style="font-size:11px;color:var(--text2);margin-bottom:12px">라인업 ${lineups.length}개${updated?' · '+formatDate(updated)+' 저장':''}</div>
     <div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px">
-      ${lineups.map(l=>`<div style="flex-shrink:0;width:48px;height:48px;border-radius:6px;overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${l.imageUrl?`<img src="${l.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:l.youtubeUrl?'<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:14px"></i>':'<i class="ti ti-photo-off" style="color:var(--text2);font-size:14px"></i>'}</div>`).join('')}
+      ${lineups.map(l=>`<div style="flex-shrink:0;width:48px;height:48px;border-radius:6px;overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${l.imageUrl?`<img src="${esc(l.imageUrl)}" style="width:100%;height:100%;object-fit:cover">`:l.youtubeUrl?'<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:14px"></i>':'<i class="ti ti-photo-off" style="color:var(--text2);font-size:14px"></i>'}</div>`).join('')}
     </div>
     <div class="flex" style="justify-content:flex-end;gap:8px">
       <button class="btn btn-danger" onclick="deleteIdealCupDraft()">삭제</button>
@@ -2727,13 +3155,13 @@ function renderIdealCupDraftList() {
     ? `<div style="font-size:12px;color:var(--text2)">아직 추가된 라인업이 없습니다.</div>`
     : _icDraftLineups.map((l,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px;border-bottom:0.5px solid var(--border)">
         ${l.previewUrl
-          ? `<img src="${l.previewUrl}" style="width:36px;height:36px;border-radius:6px;object-fit:cover">`
+          ? `<img src="${esc(l.previewUrl)}" style="width:36px;height:36px;border-radius:6px;object-fit:cover">`
           : l.youtubeUrl
             ? `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);display:flex;align-items:center;justify-content:center"><i class="ti ti-brand-youtube" style="font-size:16px;color:var(--text2)"></i></div>`
             : `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);display:flex;align-items:center;justify-content:center"><i class="ti ti-photo-off" style="font-size:16px;color:var(--text2)"></i></div>`}
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:500">${l.name}</div>
-          ${l.desc?`<div style="font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.desc}</div>`:''}
+          <div style="font-size:13px;font-weight:500">${esc(l.name)}</div>
+          ${l.desc?`<div style="font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.desc)}</div>`:''}
         </div>
         <span style="cursor:pointer;color:var(--text2);padding:0 4px" onclick="removeIdealCupLineupDraft(${i})">×</span>
       </div>`).join('');
@@ -2828,8 +3256,8 @@ window.openEditIdealCup = function(cupId) {
   _icEditCounter = 0;
   _icUnsavedActive = true;
   openModal(`<div class="modal-title">✏️ 이상형월드컵 수정</div>
-    <input type="text" id="ic-edit-title" placeholder="제목" value="${(cup.title||'').replace(/"/g,'&quot;')}" style="width:100%;margin-bottom:8px">
-    <textarea id="ic-edit-desc" placeholder="간단한 설명" style="width:100%;min-height:50px;margin-bottom:14px">${cup.description||''}</textarea>
+    <input type="text" id="ic-edit-title" placeholder="제목" value="${esc(cup.title||'')}" style="width:100%;margin-bottom:8px">
+    <textarea id="ic-edit-desc" placeholder="간단한 설명" style="width:100%;min-height:50px;margin-bottom:14px">${esc(cup.description||'')}</textarea>
     <div style="font-size:11px;color:var(--text2);margin-bottom:10px">⚠️ 라인업을 삭제하면 그동안 쌓인 투표 기록(승수/우승 횟수)도 함께 사라집니다.</div>
     <div style="font-size:12px;font-weight:600;margin-bottom:6px">라인업 추가 <span id="ic-edit-lineup-count" style="color:var(--text2);font-weight:400">0개</span></div>
     <div style="border:0.5px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:10px">
@@ -2885,12 +3313,12 @@ function renderIdealCupEditList() {
     ? `<div style="font-size:12px;color:var(--text2)">라인업이 없습니다. 2개 이상 있어야 합니다.</div>`
     : _icEditLineups.map((l,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px;border-bottom:0.5px solid var(--border)">
         ${l.previewUrl
-          ? `<img src="${l.previewUrl}" style="width:36px;height:36px;border-radius:6px;object-fit:cover">`
+          ? `<img src="${esc(l.previewUrl)}" style="width:36px;height:36px;border-radius:6px;object-fit:cover">`
           : l.youtubeUrl
             ? `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);display:flex;align-items:center;justify-content:center"><i class="ti ti-brand-youtube" style="font-size:16px;color:var(--text2)"></i></div>`
             : `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);display:flex;align-items:center;justify-content:center"><i class="ti ti-photo-off" style="font-size:16px;color:var(--text2)"></i></div>`}
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:500">${l.name}</div>
+          <div style="font-size:13px;font-weight:500">${esc(l.name)}</div>
           ${l.matches>0?`<div style="font-size:11px;color:var(--text2)">${l.matches}전 ${l.wins}승 · 우승 ${l.championCount}회</div>`:''}
         </div>
         <span style="cursor:pointer;color:var(--text2);padding:0 4px" onclick="removeIdealCupLineupEdit(${i})">×</span>
@@ -2973,7 +3401,7 @@ window.openIdealCupPlay = function(cupId) {
   while (p < total) { sizes.push(p); p *= 2; }
   const maxEven = total % 2 === 0 ? total : total - 1;
   if (maxEven > (sizes[sizes.length-1] || 0)) sizes.push(maxEven);
-  openModal(`<div class="modal-title">🏆 ${cup.title} 시작하기</div>
+  openModal(`<div class="modal-title">🏆 ${esc(cup.title)} 시작하기</div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:10px">몇 강으로 진행할까요? (등록된 라인업 ${total}개)</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
       ${sizes.map(s=>`<button class="btn" onclick="startIdealCupBracket('${cupId}',${s})">${s===2?'결승(2강)':`${s}강`}</button>`).join('')}
@@ -3000,20 +3428,20 @@ function renderIdealCupPlayMatch() {
   if (!match) return;
   if (match.bye) { advanceIdealCupLocal(match.a, null, true); return; }
   const roundLabel = idealCupRoundLabel(p.roundMatches.length);
-  openModal(`<div class="modal-title">🏆 ${p.cupTitle} · ${roundLabel}</div>
+  openModal(`<div class="modal-title">🏆 ${esc(p.cupTitle)} · ${roundLabel}</div>
     <div style="font-size:11px;color:var(--text2);margin-bottom:10px">${p.matchIdx+1}/${p.roundMatches.length}경기</div>
     <div class="ic-vs-wrap" id="ic-vs-wrap">
       <div class="ic-vs-side" id="ic-side-a">
         ${renderIdealCupMedia(match.a)}
-        <div style="font-size:14px;font-weight:600;text-align:center">${match.a.name}</div>
-        ${match.a.desc?`<div style="font-size:11px;color:var(--text2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${match.a.desc}</div>`:''}
+        <div style="font-size:14px;font-weight:600;text-align:center">${esc(match.a.name)}</div>
+        ${match.a.desc?`<div style="font-size:11px;color:var(--text2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(match.a.desc)}</div>`:''}
         <button class="btn btn-primary" id="ic-btn-a" style="width:100%" onclick="chooseIdealCupWinner('a')">선택</button>
       </div>
       <div class="ic-vs-mid" id="ic-vs-mid">VS</div>
       <div class="ic-vs-side" id="ic-side-b">
         ${renderIdealCupMedia(match.b)}
-        <div style="font-size:14px;font-weight:600;text-align:center">${match.b.name}</div>
-        ${match.b.desc?`<div style="font-size:11px;color:var(--text2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${match.b.desc}</div>`:''}
+        <div style="font-size:14px;font-weight:600;text-align:center">${esc(match.b.name)}</div>
+        ${match.b.desc?`<div style="font-size:11px;color:var(--text2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(match.b.desc)}</div>`:''}
         <button class="btn btn-primary" id="ic-btn-b" style="width:100%" onclick="chooseIdealCupWinner('b')">선택</button>
       </div>
     </div>
@@ -3023,9 +3451,9 @@ function renderIdealCupPlayMatch() {
 function renderIdealCupMedia(entry) {
   if (entry.youtubeUrl) {
     const vid = getYoutubeId(entry.youtubeUrl);
-    return `<div class="ic-media-box" style="width:100%;aspect-ratio:16/9;border-radius:var(--radius);overflow:hidden;background:var(--bg2)"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/${vid}" title="${entry.name}" style="border:none" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>`;
+    return `<div class="ic-media-box" style="width:100%;aspect-ratio:16/9;border-radius:var(--radius);overflow:hidden;background:var(--bg2)"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/${vid}" title="${esc(entry.name)}" style="border:none" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>`;
   }
-  return `<div class="ic-media-box" style="width:100%;aspect-ratio:1/1;border-radius:var(--radius);overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${entry.imageUrl?`<img src="${entry.imageUrl}" style="width:100%;height:100%;object-fit:contain">`:'<i class="ti ti-photo" style="color:var(--text2);font-size:24px"></i>'}</div>`;
+  return `<div class="ic-media-box" style="width:100%;aspect-ratio:1/1;border-radius:var(--radius);overflow:hidden;background:var(--bg2);display:flex;align-items:center;justify-content:center">${entry.imageUrl?`<img src="${esc(entry.imageUrl)}" style="width:100%;height:100%;object-fit:contain">`:'<i class="ti ti-photo" style="color:var(--text2);font-size:24px"></i>'}</div>`;
 }
 
 window.chooseIdealCupWinner = function(key) {
@@ -3089,8 +3517,8 @@ function finishIdealCupPlay(winner) {
   openModal(`<div class="modal-title">🏆 최종 우승!</div>
     <div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:16px">
       <div style="width:280px;max-width:80%">${renderIdealCupMedia(winner)}</div>
-      <div style="font-size:17px;font-weight:700">${winner.name}</div>
-      ${winner.desc?`<div style="font-size:12px;color:var(--text2)">${winner.desc}</div>`:''}
+      <div style="font-size:17px;font-weight:700">${esc(winner.name)}</div>
+      ${winner.desc?`<div style="font-size:12px;color:var(--text2)">${esc(winner.desc)}</div>`:''}
     </div>
     ${currentUser
       ? `<textarea id="ic-result-comment" placeholder="한 줄 코멘트를 남겨보세요 (선택)" style="width:100%;min-height:50px;margin-bottom:14px"></textarea>
@@ -3157,16 +3585,16 @@ window.openIdealCupRanking = async function(cupId) {
   } catch(e) { closeModal(); alert('랭킹을 불러오지 못했습니다: ' + e.message); return; }
   const lineups = [...(cup.lineups||[])].sort((a,b)=>
     (b.championCount||0)-(a.championCount||0) || ((b.matches?(b.wins||0)/b.matches:0) - (a.matches?(a.wins||0)/a.matches:0)));
-  openModal(`<div class="modal-title">📊 ${cup.title} · 랭킹</div>
+  openModal(`<div class="modal-title">📊 ${esc(cup.title)} · 랭킹</div>
     <div style="max-height:50vh;overflow-y:auto;margin-bottom:10px">
     ${lineups.length===0 ? `<div style="font-size:13px;color:var(--text2)">아직 플레이 기록이 없습니다.</div>` :
     lineups.map((l,i)=>{
       const rate = l.matches ? Math.round((l.wins||0)/l.matches*100) : 0;
       return `<div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:0.5px solid var(--border)">
         <div style="width:22px;text-align:center;font-weight:700;color:var(--text2)">${i+1}</div>
-        <div style="width:36px;height:36px;border-radius:6px;overflow:hidden;background:var(--bg2);flex-shrink:0;display:flex;align-items:center;justify-content:center">${l.imageUrl?`<img src="${l.imageUrl}" style="width:100%;height:100%;object-fit:cover">`:l.youtubeUrl?'<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:14px"></i>':'<i class="ti ti-photo-off" style="color:var(--text2);font-size:14px"></i>'}</div>
+        <div style="width:36px;height:36px;border-radius:6px;overflow:hidden;background:var(--bg2);flex-shrink:0;display:flex;align-items:center;justify-content:center">${l.imageUrl?`<img src="${esc(l.imageUrl)}" style="width:100%;height:100%;object-fit:cover">`:l.youtubeUrl?'<i class="ti ti-brand-youtube" style="color:var(--text2);font-size:14px"></i>':'<i class="ti ti-photo-off" style="color:var(--text2);font-size:14px"></i>'}</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.name}</div>
+          <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.name)}</div>
           <div style="font-size:11px;color:var(--text2)">우승 ${l.championCount||0}회 · 매치 승률 ${rate}% (${l.wins||0}/${l.matches||0})</div>
         </div>
       </div>`;
@@ -3185,15 +3613,15 @@ window.openIdealCupComments = async function(cupId) {
       .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
   } catch(e) {}
   const cup = idealCups.find(c=>c.id===cupId);
-  openModal(`<div class="modal-title">💬 ${cup?cup.title:''} · 댓글</div>
+  openModal(`<div class="modal-title">💬 ${cup?esc(cup.title):''} · 댓글</div>
     <div style="max-height:50vh;overflow-y:auto;margin-bottom:10px">
     ${comments.length===0 ? `<div style="font-size:13px;color:var(--text2)">아직 댓글이 없습니다.</div>` :
     comments.map(c=>{
       const date = c.createdAt ? new Date(c.createdAt.seconds*1000) : null;
       return `<div style="padding:8px 4px;border-bottom:0.5px solid var(--border)">
-        <div style="font-size:12px;color:var(--text2);margin-bottom:2px">🏆 ${c.winnerName||'-'}</div>
-        <div style="font-size:13px;margin-bottom:4px;white-space:pre-line">${c.comment}</div>
-        <div style="font-size:11px;color:var(--text2)">${resolveAuthorName(c.authorUid, c.authorName)}${date?' · '+formatDate(date):''}</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:2px">🏆 ${esc(c.winnerName||'-')}</div>
+        <div style="font-size:13px;margin-bottom:4px;white-space:pre-line">${esc(c.comment)}</div>
+        <div style="font-size:11px;color:var(--text2)">${esc(resolveAuthorName(c.authorUid, c.authorName))}${date?' · '+formatDate(date):''}</div>
       </div>`;
     }).join('')}
     </div>
@@ -3216,9 +3644,9 @@ function renderRollingPaperList(memberId) {
   if (!el) return;
   if (rollingMessages.length===0) { el.innerHTML='<div style="font-size:13px;color:var(--text2)">아직 남겨진 메시지가 없습니다. 첫 메시지를 남겨보세요!</div>'; return; }
   el.innerHTML = rollingMessages.map(r=>`<div style="background:var(--bg2);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px">
-    <div style="font-size:13px;line-height:1.6;white-space:pre-line">${r.message}</div>
+    <div style="font-size:13px;line-height:1.6;white-space:pre-line;overflow-wrap:anywhere">${esc(r.message)}</div>
     <div class="flex-between" style="margin-top:6px">
-      <div style="font-size:11px;color:var(--text2)">- ${r.anonymous?'익명':resolveAuthorName(r.fromUid, r.fromName)}</div>
+      <div style="font-size:11px;color:var(--text2)">- ${r.anonymous?'익명':esc(resolveAuthorName(r.fromUid, r.fromName))}</div>
       ${(isAdmin||(currentUser&&r.fromUid===currentUser.uid))?`<button class="btn btn-sm btn-danger" onclick="deleteRollingMessage('${r.id}','${memberId}')"><i class="ti ti-trash" style="font-size:11px"></i></button>`:''}
     </div>
   </div>`).join('');
@@ -3243,6 +3671,7 @@ window.submitRollingMessage = async function(memberId) {
     createdAt: serverTimestamp()
   });
   closeModal();
+  toast('메시지를 남겼어요 💌');
   loadRollingMessages(memberId);
 };
 
@@ -3253,6 +3682,10 @@ window.deleteRollingMessage = async function(id, memberId) {
 };
 
 const UPDATES=[
+  {version:'v4.18.0',date:'2026.10.04',items:['화면 효과 추가 — 탭을 옮길 때 내용이 부드럽게 떠오르고, 팝업이 열리고 닫힐 때 자연스럽게 나타났다 사라지도록 변경','저장·삭제·복사 등을 하면 화면 아래에 잠깐 결과 알림(토스트)이 떴다 사라짐','앱을 처음 열 때 빈 화면 대신 🎤 로딩 화면 표시, 다크 모드도 첫 화면부터 바로 적용','오늘 있는 벙은 대시보드에 "오늘 · D-DAY"로 강조, 벙 목록에는 "오늘" 배지가 은은하게 깜빡임','참석자 태그가 추가될 때 톡 튀어나오는 효과, 통계·명예의 전당 막대그래프가 차오르는 효과, 카드에 마우스를 올리면 살짝 떠오르는 효과','다크/라이트 모드 전환 시 색이 부드럽게 바뀜, 버튼을 누르면 살짝 눌리는 느낌 추가, 저장 중인 버튼에는 로딩 표시','기기에서 "동작 줄이기"를 켜둔 경우에는 애니메이션이 자동으로 꺼짐']},
+  {version:'v4.17.0',date:'2026.10.04',items:['유령 현황 기준 통일 — 기산일이 지난 뒤 정리를 마치기 전까지는 대시보드·회원 명단·유령 정리 탭이 모두 "이번 정리" 기준으로 표시되고, 초기화(또는 "이미 정리했어요")를 누르면 "다음 정리" 기준 미리보기로 바뀜 (예전에는 기산일 다음 날부터 지난주에 온 회원까지 전부 유령 대상으로 보였음). 정리 완료 상태는 서버에 저장되어 다른 운영진 화면에도 반영 (저장 권한이 없으면 완료를 누른 기기에만 반영)','운영진에게는 이번 정리가 남아 있으면 대시보드 상단에 "정리하기" 안내 표시, 다음 정리일까지 남은 날짜를 달력 날짜 기준으로 정확히 계산','벙 목록을 월별로 묶어 보여주고 벙 이름·장소·참석자(별명 포함)로 검색 가능, 예정 벙에는 D-day 표시','벙 추가·수정 시 예전에 입력했던 장소·시간·주제를 자동완성으로 추천, 벙 이름을 비워두면 "10월 4일 번개"처럼 자동으로 지어짐','캘린더에서 날짜를 누르면 그날 벙을 바로 추가(운영진), "오늘" 버튼으로 이번 달로 바로 이동, 벙 상세에서 바로 수정 가능','회원 명단에서 이름을 누르면 그 회원 프로필로 이동, 회원 수 표시, 검색은 이름·별명 모두에서 대소문자 무시','지금 보던 탭이 주소 끝(#members 등)에 기억되어 새로고침해도 그대로 유지되고, 휴대폰 뒤로가기로 이전 탭으로 돌아가거나 열린 팝업만 닫을 수 있음. Esc 키로도 팝업 닫기','갤러리 사진 크게 보기에서 좌우 버튼·키보드 화살표·스와이프로 사진 넘기기','공지사항 빨간 점은 마지막으로 확인한 뒤 새 공지가 올라왔을 때만 표시','통계 탭의 "최근 2개월"을 오늘 기준 최근 두 달로 변경 (기산일 직후에는 기간이 며칠뿐이라 통계가 거의 비어 보이던 문제)','백업 파일에 게시글·플레이리스트·시즌 업적·정산 내역까지 함께 저장','휴대폰에서 입력칸을 누를 때 화면이 확대되던 문제 방지, 금액 입력칸은 숫자 키패드로 열림','카카오톡 인앱 브라우저처럼 복사 기능이 막힌 환경에서도 공지·정산·회고·퇴출 메시지 복사가 되도록 보완','오늘의 노래 추천에 유튜브 링크가 있으면 바로 듣기 링크 표시, 연결이 끊기면 상단 상태줄에 오류 표시']},
+  {version:'v4.16.1',date:'2026.10.04',items:['[버그 수정] 정산에서 "벙 선택"으로 시작했다가 "직접 입력"으로 바꾸면, 아무도 체크하지 않았는데 이전 벙 참석자 인원수로 나눠 계산되고 정산 텍스트에 회원 ID가 찍히던 문제 수정 — 모드나 벙을 바꾸면 항목 참여자가 새 참가자 기준으로 다시 맞춰짐','[버그 수정] 정산 직접 입력에서 참가자를 나중에 추가하면 이미 만든 항목에 포함되지 않던 문제 수정 (추가한 사람은 모든 항목에 자동 포함, 빠지는 항목만 체크 해제)','[버그 수정] 정산 저장 후 정산 탭 목록에 바로 안 보이던 문제, 항목명을 비워두면 금액은 계산되는데 저장 내역에서는 빠지던 문제 수정','[버그 수정] 벙 추가·수정 참석자 목록에서 체크박스를 직접 누르면 선택이 안 되고, 이름 글자를 눌러야만 선택되던 문제 수정 (체크박스와 위쪽 태그가 항상 같게 유지)','[버그 수정] 일반 회원·게스트에게도 화면이 다시 그려지면 벙·회원 수정/삭제 버튼이 보이던 문제 수정','[버그 수정] 한국 시간 오전 9시 전에 벙·회원을 추가하면 기본 날짜가 어제로 들어가던 문제, 오늘 있는 벙이 오전 9시 이후 "완료"로 바뀌고 대시보드에서 사라지던 문제 수정','[버그 수정] 회원 명단 정렬(가입일순/이름순/참여율순)을 바꿔도 아무 변화가 없던 문제 수정','[버그 수정] 회원 프로필 검색에서 프로필 사진이 있는 회원은 검색되지 않던 문제 수정','[버그 수정] 한글 입력 중 엔터를 누르면 마지막 글자가 입력칸에 남거나 댓글이 두 번 등록될 수 있던 문제 수정','[버그 수정] 저장 버튼을 빠르게 두 번 누르면 벙·회원·글이 두 개씩 저장되던 문제 수정 (처리 중에는 버튼 잠금)','[버그 수정] 노래 토너먼트 투표창을 바깥 클릭으로 닫으면 투표가 바뀔 때마다 창이 다시 뜨던 문제 수정','[버그 수정] 12월 말에 1월 초 가입 기념일이 보이지 않던 문제 수정, 참석자에서 빠져 최근 참여일이 앞당겨질 때 "유령에서 부활" 업적이 잘못 달리던 문제 수정','[보안] 게시글 제목·닉네임·메모 등에 HTML/스크립트를 넣으면 다른 사람 화면에서 실행될 수 있던 문제 수정 — 사용자가 입력한 글은 모두 글자 그대로 표시']},
+  {version:'v4.16.0',date:'2026.10.04',items:['벙 추가 시 구분 기본값을 "번개"로 변경','회원 별명 기능 추가 — 회원 명단에 "별명" 칸이 생기고 회원 추가·수정 화면, 별명 칸의 편집 버튼, "별명 관리"(전체 회원 한 번에 입력)에서 별명을 넣을 수 있음 (예: 고의석 → 의석, uiseok)','벙 참석자·정산 이름 입력 시 대소문자·띄어쓰기를 구분하지 않고(hyeon → Hyeon), 별명으로도 입력 가능(의석 → 고의석). 두 글자 이상이면 일부만 입력해도 한 명으로 특정되면 바로 추가','입력하는 동안 아래 회원 목록이 이름·별명으로 바로 걸러지고, 여러 명이 해당되면 누구인지 고르라고 안내, 없는 이름은 안내 문구 표시','정산 직접 입력에서 이름을 치면 회원 추천이 뜨고, 회원 명단에 없는 이름은 게스트로 구분 표시. 직접 입력 정산에 이름을 붙일 수 있음','별명이 다른 회원 이름·별명과 겹치면 저장 전에 알려줌']},
   {version:'v4.15.0',date:'2026.08.03',items:['유령 정리 탭에 정리 주기 선택 드롭다운 추가 — 기산일이 지나면 이전 두 달 판정 기준을 더 이상 볼 수 없던 문제 수정, 이번 정리 주기가 지난 뒤에도(다음 짝수 달 1일 전까지) 목록 조회·초기화가 계속 가능하며 최근 12회분의 지난 정리 주기와 다음 정리 예정도 조회 가능']},
   {version:'v4.14.0',date:'2026.06.25',items:['이상형월드컵 카드에 "수정" 버튼 추가 — 제작자 본인만 제목/설명/라인업(추가·삭제)을 수정할 수 있음, 기존 라인업의 투표 기록(승수·우승 횟수)은 유지되며 라인업을 삭제하면 해당 기록도 함께 삭제된다는 안내 표시']},
   {version:'v4.13.1',date:'2026.06.25',items:['[버그 수정] 공지사항·게시판·댓글·이상형월드컵 댓글/제작자·롤링페이퍼·사이드바 등 앱 곳곳에 닉네임이 구글 계정 이름으로 표시되던 문제 수정 — 프로필이 연결된 회원은 항상 프로필 닉네임으로 표시되도록 통일','회원이 닉네임을 변경하면 과거에 작성한 글/댓글/롤링페이퍼에 표시되는 이름도 즉시 새 닉네임으로 함께 바뀌도록 변경 (작성 시점에 저장된 이름이 아니라 매번 최신 프로필 이름을 조회해서 표시)','사이드바 좌측 상단 사용자 표시명이 운영진 여부와 무관하게 항상 최신 프로필 닉네임으로 갱신되도록 수정 (기존에는 운영진 권한이 바뀔 때만 갱신되어 계속 구글 이름으로 남아있던 문제)']},
@@ -3314,34 +3747,62 @@ function renderUpdates() {
 }
 
 // ── 공통 UI ───────────────────────────────────────────────────────
-window.switchTab = function(tab) {
-  document.querySelectorAll('.nav-item').forEach((t,i)=>t.classList.toggle('active',
-    ['dashboard','notice','board','settlement','members','bung','ghost','stats','hall','playground','calendar','profile','gallery','updates'][i]===tab));
+// 탭 이동: 주소 끝(#members 등)에 현재 탭을 남겨서 새로고침해도 그 탭이 유지되고,
+// 휴대폰 뒤로가기로 이전 탭으로 돌아갈 수 있게 함.
+window.switchTab = function(tab, opts = {}) {
+  if (!TABS.includes(tab)) tab = 'dashboard';
+  const changed = tab !== currentTab;
+  currentTab = tab;
+  const navItems = document.querySelectorAll('.nav-item');
+  navItems.forEach((t,i)=>t.classList.toggle('active', TABS[i]===tab));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
-  document.getElementById('sec-'+tab).classList.add('active');
+  const sec = document.getElementById('sec-'+tab);
+  if (sec) { void sec.offsetWidth; sec.classList.add('active'); }
+  if (!opts.fromHistory && location.hash.slice(1) !== tab) {
+    try { history[changed ? 'pushState' : 'replaceState']({tab}, '', '#' + tab); } catch(e) {}
+  }
+  if (changed) window.scrollTo(0, 0);
+  // 모바일 하단 탭바에서 선택한 탭이 화면 밖에 있으면 보이도록 스크롤
+  const activeNav = navItems[TABS.indexOf(tab)];
+  if (activeNav && window.matchMedia('(max-width:640px)').matches) activeNav.scrollIntoView({inline:'center', block:'nearest', behavior:'smooth'});
   if(tab==='gallery') loadGallery();
   if(tab==='calendar') renderCalendar();
   if(tab==='profile') renderProfileList();
   if(tab==='board') renderBoardList();
   if(tab==='settlement') renderSettlementList();
   if(tab==='playground') renderPlayground();
+  if(tab==='notice') { markNoticesSeen(); updateNoticeDot(); }
 };
 
-window.filterMembers = function(q) {
-  document.querySelectorAll('#member-tbody tr').forEach(row=>{
-    const name=row.querySelector('td strong')?.textContent||'';
-    row.style.display=name.includes(q)?'':'none';
-  });
-};
+function restoreTabFromHash() {
+  const t = decodeURIComponent(location.hash.slice(1));
+  if (TABS.includes(t) && t !== currentTab) switchTab(t, {fromHistory: true});
+}
 
+window.addEventListener('popstate', () => {
+  if (document.getElementById('app').style.display === 'none') return;
+  // 팝업이 떠 있을 때 뒤로가기 → 팝업만 닫고 탭은 그대로
+  const backdrop = document.getElementById('modal-backdrop');
+  const lightbox = document.getElementById('kiku-lightbox');
+  if (lightbox || (backdrop.classList.contains('open') && !backdrop.classList.contains('closing'))) {
+    try { history.pushState({tab: currentTab}, '', '#' + currentTab); } catch(e) {}
+    if (lightbox) closeLightbox(); else closeModal();
+    return;
+  }
+  const t = decodeURIComponent(location.hash.slice(1));
+  switchTab(TABS.includes(t) ? t : 'dashboard', {fromHistory: true});
+});
+
+let profileSearchQuery = '';
 window.filterProfileList = function(q) {
-  document.querySelectorAll('#profile-list-grid > div').forEach(card=>{
-    const name=card.querySelectorAll('div')[1]?.textContent||'';
-    card.style.display=name.includes(q)?'':'none';
+  profileSearchQuery = q;
+  const key = normName(q);
+  document.querySelectorAll('#profile-list-grid > .profile-grid-card').forEach(card=>{
+    card.classList.toggle('is-hidden', !!key && !(card.dataset.search || '').includes(key));
   });
 };
 
-window.openProfile = function(id) { selectedMemberId=id; renderMemberProfile(id); };
+window.openProfile = function(id) { selectedMemberId=id; renderMemberProfile(id); window.scrollTo(0, 0); };
 window.backToProfileList = function() { selectedMemberId=null; renderProfileList(); };
 window.calNav = function(dir) {
   calMonth+=dir;
@@ -3349,20 +3810,25 @@ window.calNav = function(dir) {
   if(calMonth<0){calMonth=11;calYear--;}
   renderCalendar();
 };
+window.calToday = function() { calYear = TODAY.getFullYear(); calMonth = TODAY.getMonth(); renderCalendar(); };
 
 window.showCalBungDetail = function(id) {
   const b=bungs.find(x=>x.id===id);if(!b)return;
   const host=b.hostId?members.find(x=>x.id===b.hostId):null;
   const names=(b.attendees||[]).map(id=>{const m=members.find(x=>x.id===id);return m?m.name:'?'});
-  openModal(`<div class="modal-title">${b.name}</div>
+  openModal(`<div class="modal-title">${esc(b.name)}</div>
     <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;margin-bottom:16px">
       <div class="flex"><i class="ti ti-calendar" style="color:var(--info)"></i>${formatDate(b.date)}</div>
-      ${b.place?`<div class="flex"><i class="ti ti-map-pin" style="color:var(--danger)"></i>${b.place}</div>`:''}
-      ${b.time?`<div class="flex"><i class="ti ti-clock" style="color:var(--success)"></i>${b.time}</div>`:''}
-      ${host?`<div class="flex"><i class="ti ti-crown" style="color:var(--warn)"></i>${host.name}</div>`:''}
-      <div class="flex"><i class="ti ti-users" style="color:var(--purple)"></i>${names.join(', ')||'없음'} (${names.length}명)</div>
+      ${b.place?`<div class="flex"><i class="ti ti-map-pin" style="color:var(--danger)"></i>${esc(b.place)}</div>`:''}
+      ${b.time?`<div class="flex"><i class="ti ti-clock" style="color:var(--success)"></i>${esc(b.time)}</div>`:''}
+      ${host?`<div class="flex"><i class="ti ti-crown" style="color:var(--warn)"></i>${esc(host.name)}</div>`:''}
+      <div class="flex" style="align-items:flex-start"><i class="ti ti-users" style="color:var(--purple);margin-top:2px"></i><span>${names.map(esc).join(', ')||'없음'} (${names.length}명)</span></div>
+      ${b.memo?`<div class="memo-text">📝 ${esc(b.memo)}</div>`:''}
     </div>
-    <div class="flex" style="justify-content:flex-end"><button class="btn btn-primary" onclick="closeModal()">닫기</button></div>`);
+    <div class="flex" style="justify-content:flex-end;gap:8px">
+      <button class="btn edit-only" onclick="closeModal();openEditBung('${b.id}')"><i class="ti ti-edit"></i> 수정</button>
+      <button class="btn btn-primary" onclick="closeModal()">닫기</button>
+    </div>`);
 };
 
 // ── 모임비 정산 계산기 ───────────────────────────────────────────
@@ -3370,6 +3836,8 @@ let settlementItems = [];
 let settlementMode = 'bung';
 let settlementBungId = null;
 let settlementManualNames = [];
+let settlementTitle = '';
+let settlementPopName = null; // 방금 추가한 참가자 (태그 등장 효과용)
 
 function settlementParticipants() {
   if (settlementMode === 'bung') {
@@ -3380,36 +3848,77 @@ function settlementParticipants() {
   return settlementManualNames.map(n => ({key:n, name:n}));
 }
 
+// 항목별 참여자는 항상 "지금 참가자 목록" 안에서만 유지한다.
+// (예전에는 벙 선택 → 직접 입력으로 바꿔도 이전 벙 참석자가 항목에 그대로 남아서,
+//  아무도 체크하지 않았는데 그 인원수로 나눠 계산되던 버그가 있었음)
+// resetAll: 참가자 목록 자체가 바뀌었을 때(모드/벙 변경) 모든 항목을 "전원 참여"로 초기화
+function syncSettlementItems(resetAll) {
+  const keys = settlementParticipants().map(p => p.key);
+  const valid = new Set(keys);
+  settlementItems.forEach(it => {
+    it.participants = resetAll ? [...keys] : it.participants.filter(k => valid.has(k));
+  });
+}
+function itemParticipants(it) {
+  const valid = new Set(settlementParticipants().map(p => p.key));
+  return it.participants.filter(k => valid.has(k));
+}
+function settlementItemLabel(it, idx) { return (it.name || '').trim() || `항목 ${idx + 1}`; }
+
+// "새 정산" 기본 벙: 오늘 이전에 끝난 벙 중 참석자가 있는 가장 최근 벙
+function defaultSettlementBungId() {
+  const today = todayStr();
+  const sorted = [...bungs].filter(b => b.date).sort((a,b) => b.date.localeCompare(a.date));
+  const pick = sorted.find(b => b.date <= today && (b.attendees||[]).length) || sorted.find(b => b.date <= today) || sorted[0];
+  return pick ? pick.id : null;
+}
+
 window.openSettlement = function(bungId) {
   if (bungId) { switchTab('settlement'); }
   settlementItems = [];
   settlementMode = 'bung';
-  settlementBungId = bungId || (bungs[0]?.id || null);
+  settlementBungId = bungId || defaultSettlementBungId();
   settlementManualNames = [];
+  settlementTitle = '';
+  settlementPopName = null;
   renderSettlementModal();
 };
 
+function settlementTagsHTML() {
+  if (!settlementManualNames.length) return '<span class="tag-empty">참가자를 입력해주세요</span>';
+  return settlementManualNames.map(n => {
+    const isMember = members.some(m => m.name === n);
+    return `<span class="attendee-tag${isMember ? '' : ' guest'}${n === settlementPopName ? ' pop' : ''}"${isMember ? '' : ' title="회원 명단에 없는 이름 (게스트)"'}>${esc(n)}<span class="tag-x" onclick="removeSettlementManualName(${jsArg(n)})" title="빼기">×</span></span>`;
+  }).join('') + `<span class="tag-empty" style="margin-left:2px">${settlementManualNames.length}명</span>`;
+}
+
+function settlementSourceHTML() {
+  if (settlementMode === 'bung') {
+    const list = [...bungs].filter(b => b.date).sort((a,b) => b.date.localeCompare(a.date));
+    const ps = settlementParticipants();
+    return `<select id="settlement-bung-select" onchange="onSettlementBungChange(this.value)">
+        ${list.length===0 ? '<option value="">등록된 벙이 없습니다</option>' : list.map(b => `<option value="${b.id}" ${b.id===settlementBungId?'selected':''}>${formatDate(b.date)} · ${esc(b.name)} (${(b.attendees||[]).length}명)</option>`).join('')}
+      </select>
+      <div style="font-size:12px;color:var(--text2);margin-top:6px">참석자 ${ps.length}명: ${ps.map(p => esc(p.name)).join(', ') || '없음'}</div>`;
+  }
+  return `<input type="text" id="settlement-title" placeholder="정산 이름 (선택) — 예: 10월 4일 2차" value="${esc(settlementTitle)}" oninput="onSettlementTitleInput(this.value)" style="margin-bottom:8px">
+    <div class="flex" style="gap:8px;margin-bottom:6px">
+      <input type="text" id="settlement-name-input" placeholder="이름·별명 입력 후 엔터 (쉼표로 여러 명)" autocomplete="off" style="flex:1;min-width:0" oninput="renderSettlementSuggest()" onkeydown="onEnterKey(event, addSettlementManualName)">
+      <button class="btn btn-sm" type="button" style="flex-shrink:0" onclick="addSettlementManualName()">추가</button>
+    </div>
+    <div class="picker-msg" id="settlement-name-msg"></div>
+    <div class="name-suggest" id="settlement-suggest"></div>
+    <div class="tag-area" id="settlement-name-tags">${settlementTagsHTML()}</div>
+    <div class="settle-hint">회원 이름·별명으로 입력하면 회원 이름으로 들어가요 (대소문자·띄어쓰기 무시). 명단에 없는 이름은 게스트로 추가돼요.<br>추가한 참가자는 모든 항목에 자동 포함되고, 빠지는 항목만 체크를 해제하면 돼요.</div>`;
+}
+
 function renderSettlementModal() {
-  const pastBungs = [...bungs].sort((a,b)=>new Date(b.date)-new Date(a.date));
   openModal(`<div class="modal-title"><i class="ti ti-calculator" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>모임비 정산 계산기</div>
     <div class="flex" style="gap:8px;margin-bottom:12px">
       <button class="btn btn-sm ${settlementMode==='bung'?'btn-primary':''}" onclick="setSettlementMode('bung')">벙 선택</button>
       <button class="btn btn-sm ${settlementMode==='manual'?'btn-primary':''}" onclick="setSettlementMode('manual')">직접 입력</button>
     </div>
-    <div id="settlement-source-area" style="margin-bottom:14px">
-      ${settlementMode==='bung' ? `
-        <select id="settlement-bung-select" onchange="onSettlementBungChange(this.value)">
-          ${pastBungs.length===0?'<option value="">등록된 벙이 없습니다</option>':pastBungs.map(b=>`<option value="${b.id}" ${b.id===settlementBungId?'selected':''}>${formatDate(b.date)} · ${b.name}</option>`).join('')}
-        </select>
-        <div style="font-size:12px;color:var(--text2);margin-top:6px">참석자: ${settlementParticipants().map(p=>p.name).join(', ')||'없음'}</div>
-      ` : `
-        <div class="flex" style="gap:8px;margin-bottom:6px">
-          <input type="text" id="settlement-name-input" placeholder="이름 입력 후 엔터" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter'){event.preventDefault();addSettlementManualName();}">
-          <button class="btn btn-sm" type="button" style="flex-shrink:0" onclick="addSettlementManualName()">추가</button>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px" id="settlement-name-tags">${settlementManualNames.map(n=>`<span class="attendee-tag">${n} <span style="cursor:pointer;margin-left:2px" onclick="removeSettlementManualName('${n}')">×</span></span>`).join('')||'<span style="font-size:12px;color:var(--text2)">참가자를 입력해주세요</span>'}</div>
-      `}
-    </div>
+    <div id="settlement-source-area" style="margin-bottom:14px">${settlementSourceHTML()}</div>
     <div style="font-size:13px;font-weight:500;margin-bottom:8px">정산 항목</div>
     <div id="settlement-items-area" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px"></div>
     <button class="btn btn-sm" style="margin-bottom:16px" onclick="addSettlementItem()"><i class="ti ti-plus"></i> 항목 추가</button>
@@ -3419,32 +3928,97 @@ function renderSettlementModal() {
   else renderSettlementItems();
 }
 
+window.onSettlementTitleInput = function(v) { settlementTitle = v; renderSettlementResult(); };
+
 window.setSettlementMode = function(mode) {
+  if (mode === settlementMode) return;
   settlementMode = mode;
+  settlementPopName = null;
+  syncSettlementItems(true);
   renderSettlementModal();
+  if (mode === 'manual') document.getElementById('settlement-name-input')?.focus();
 };
 
 window.onSettlementBungChange = function(id) {
   settlementBungId = id;
+  syncSettlementItems(true);
   renderSettlementModal();
 };
 
+// 참가자 목록이 바뀐 뒤 태그·항목·결과만 다시 그림 (입력칸 포커스는 유지)
+function refreshSettlementParticipants() {
+  const tags = document.getElementById('settlement-name-tags');
+  if (tags) tags.innerHTML = settlementTagsHTML();
+  renderSettlementItems();
+  renderSettlementSuggest();
+}
+
+function addSettlementName(name) {
+  if (!name || settlementManualNames.includes(name)) return false;
+  settlementManualNames.push(name);
+  // 새 참가자는 기존 항목 모두에 포함 (항목을 먼저 만들고 사람을 나중에 넣어도 같은 결과)
+  settlementItems.forEach(it => { if (!it.participants.includes(name)) it.participants.push(name); });
+  settlementPopName = name;
+  return true;
+}
+
 window.addSettlementManualName = function() {
   const input = document.getElementById('settlement-name-input');
-  const name = input.value.trim();
-  if (!name || settlementManualNames.includes(name)) { input.value=''; return; }
-  settlementManualNames.push(name);
-  input.value = '';
-  renderSettlementModal();
-  // 모달 전체를 다시 그리면서 input이 새로 생성되어 포커스가 풀리므로, 다시 포커스를 줌
-  const newInput = document.getElementById('settlement-name-input');
-  if (newInput) newInput.focus();
+  if (!input) return;
+  const tokens = input.value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  if (!tokens.length) return;
+  const keep = [], notes = [];
+  tokens.forEach(t => {
+    const r = resolveMemberInput(t);
+    if (r.member) {
+      if (!addSettlementName(r.member.name)) notes.push(`${r.member.name}님은 이미 들어가 있어요`);
+    } else if (r.candidates) {
+      keep.push(t);
+      notes.push(`"${t}" → ${r.candidates.map(m => m.name).join(', ')} 중 누구인지 골라주세요`);
+    } else {
+      // 명단에 없는 이름은 게스트로 추가 (외부 인원 정산용)
+      if (addSettlementName(t)) notes.push(`"${t}"은(는) 회원 명단에 없어서 게스트로 추가했어요`);
+    }
+  });
+  input.value = keep.join(', ');
+  refreshSettlementParticipants();
+  const msg = document.getElementById('settlement-name-msg');
+  if (msg) msg.textContent = notes.join(' · ');
+  input.focus();
+};
+
+window.renderSettlementSuggest = function() {
+  const input = document.getElementById('settlement-name-input');
+  const box = document.getElementById('settlement-suggest');
+  if (!input || !box) return;
+  const msg = document.getElementById('settlement-name-msg');
+  if (msg) msg.textContent = '';
+  const token = input.value.split(/[,，]/).pop();
+  if (!normName(token)) { box.innerHTML = ''; return; }
+  const matches = sortMembersByName(members.filter(m => memberMatchesQuery(m, token) && !settlementManualNames.includes(m.name))).slice(0, 8);
+  box.innerHTML = matches.map(m => {
+    const al = memberAliases(m);
+    return `<button type="button" class="suggest-chip" onclick="pickSettlementName(${jsArg(m.id)})">${esc(m.name)}${al.length ? `<small>${esc(al.join(', '))}</small>` : ''}</button>`;
+  }).join('');
+};
+
+window.pickSettlementName = function(memberId) {
+  const m = members.find(x => x.id === memberId);
+  const input = document.getElementById('settlement-name-input');
+  if (!m) return;
+  if (input) { const parts = input.value.split(/[,，]/); parts.pop(); input.value = parts.map(s => s.trim()).filter(Boolean).join(', '); }
+  addSettlementName(m.name);
+  refreshSettlementParticipants();
+  const msg = document.getElementById('settlement-name-msg');
+  if (msg) msg.textContent = '';
+  input?.focus();
 };
 
 window.removeSettlementManualName = function(name) {
   settlementManualNames = settlementManualNames.filter(n => n !== name);
   settlementItems.forEach(it => { it.participants = it.participants.filter(k => k !== name); });
-  renderSettlementModal();
+  settlementPopName = null;
+  refreshSettlementParticipants();
 };
 
 window.addSettlementItem = function() {
@@ -3458,6 +4032,13 @@ window.removeSettlementItem = function(id) {
   renderSettlementItems();
 };
 
+function settlementPerText(it) {
+  const n = itemParticipants(it).length;
+  if (it.amount && n === 0) return '<span style="color:var(--warn)">⚠️ 참여자를 1명 이상 선택해주세요 (지금은 정산에서 빠져요)</span>';
+  const per = n > 0 ? Math.round(it.amount / n) : 0;
+  return `${n}명 참여 · 1인당 ${per.toLocaleString()}원`;
+}
+
 window.updateSettlementItemField = function(id, field, value) {
   const it = settlementItems.find(x => x.id === id);
   if (!it) return;
@@ -3465,14 +4046,9 @@ window.updateSettlementItemField = function(id, field, value) {
   if (field === 'amount') {
     // 입력칸을 통째로 다시 그리면 커서가 사라지므로, 1인당 금액 표시만 갱신
     const perEl = document.getElementById('settlement-per-'+id);
-    if (perEl) {
-      const perPerson = it.participants.length > 0 ? Math.round(it.amount / it.participants.length) : 0;
-      perEl.textContent = `${it.participants.length}명 참여 · 1인당 ${perPerson.toLocaleString()}원`;
-    }
-    renderSettlementResult();
-  } else {
-    renderSettlementResult();
+    if (perEl) perEl.innerHTML = settlementPerText(it);
   }
+  renderSettlementResult();
 };
 
 window.formatSettlementAmountInput = function(id, el) {
@@ -3489,28 +4065,37 @@ window.toggleSettlementParticipant = function(itemId, key) {
   renderSettlementItems();
 };
 
+window.toggleSettlementAll = function(itemId) {
+  const it = settlementItems.find(x => x.id === itemId);
+  if (!it) return;
+  const keys = settlementParticipants().map(p => p.key);
+  it.participants = itemParticipants(it).length === keys.length ? [] : [...keys];
+  renderSettlementItems();
+};
+
 function renderSettlementItems() {
   const area = document.getElementById('settlement-items-area');
   if (!area) return;
   const participants = settlementParticipants();
   area.innerHTML = settlementItems.map(it => {
-    const perPerson = it.participants.length > 0 ? Math.round(it.amount / it.participants.length) : 0;
+    const allOn = participants.length > 0 && itemParticipants(it).length === participants.length;
     return `<div style="border:0.5px solid var(--border);border-radius:var(--radius);padding:12px">
       <div class="settle-item-row">
-        <input type="text" class="settle-item-name" placeholder="항목명 (예: 식사)" value="${it.name}" oninput="updateSettlementItemField('${it.id}','name',this.value)">
+        <input type="text" class="settle-item-name" placeholder="항목명 (예: 노래방)" value="${esc(it.name)}" oninput="updateSettlementItemField('${it.id}','name',this.value)">
         <div class="settle-item-amount-group">
-          <input type="text" placeholder="금액" value="${it.amount?it.amount.toLocaleString():''}" style="width:110px;text-align:right" oninput="updateSettlementItemField('${it.id}','amount',this.value)" onblur="formatSettlementAmountInput('${it.id}',this)">
+          <input type="text" inputmode="numeric" placeholder="금액" value="${it.amount?it.amount.toLocaleString():''}" style="width:110px;text-align:right" oninput="updateSettlementItemField('${it.id}','amount',this.value)" onblur="formatSettlementAmountInput('${it.id}',this)">
           <span style="font-size:13px;color:var(--text2)">원</span>
-          <button class="btn btn-sm btn-danger" onclick="removeSettlementItem('${it.id}')"><i class="ti ti-trash"></i></button>
+          <button class="btn btn-sm btn-danger" onclick="removeSettlementItem('${it.id}')" aria-label="항목 삭제"><i class="ti ti-trash"></i></button>
         </div>
       </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         ${participants.length===0?'<span style="font-size:12px;color:var(--text2)">참가자가 없습니다</span>':participants.map(p=>{
           const checked = it.participants.includes(p.key);
-          return `<label style="display:flex;align-items:center;gap:4px;font-size:13px;border:0.5px solid var(--border);border-radius:var(--radius);padding:4px 10px;cursor:pointer;${checked?'background:var(--bg2)':'color:var(--text3)'}"><input type="checkbox" ${checked?'checked':''} style="margin:0" onchange="toggleSettlementParticipant('${it.id}','${p.key}')">${p.name}</label>`;
+          return `<label style="display:flex;align-items:center;gap:4px;font-size:13px;border:0.5px solid var(--border);border-radius:var(--radius);padding:4px 10px;cursor:pointer;transition:background-color .15s,color .15s;${checked?'background:var(--bg2)':'color:var(--text3)'}"><input type="checkbox" ${checked?'checked':''} style="margin:0" onchange="toggleSettlementParticipant('${it.id}',${jsArg(p.key)})">${esc(p.name)}</label>`;
         }).join('')}
+        ${participants.length>1?`<button type="button" class="alias-edit-btn" onclick="toggleSettlementAll('${it.id}')">${allOn?'모두 해제':'모두 선택'}</button>`:''}
       </div>
-      <div id="settlement-per-${it.id}" style="font-size:12px;color:var(--text2);margin-top:8px">${it.participants.length}명 참여 · 1인당 ${perPerson.toLocaleString()}원</div>
+      <div id="settlement-per-${it.id}" style="font-size:12px;color:var(--text2);margin-top:8px">${settlementPerText(it)}</div>
     </div>`;
   }).join('');
   renderSettlementResult();
@@ -3522,10 +4107,11 @@ function computeSettlementTotals() {
   participants.forEach(p => totals[p.key] = 0);
   let grandTotal = 0;
   settlementItems.forEach(it => {
-    if (!it.amount || it.participants.length === 0) return;
-    const per = Math.round(it.amount / it.participants.length);
+    const ps = itemParticipants(it);
+    if (!it.amount || ps.length === 0) return;
+    const per = Math.round(it.amount / ps.length);
     grandTotal += it.amount;
-    it.participants.forEach(key => { if (totals[key] !== undefined) totals[key] += per; });
+    ps.forEach(key => { totals[key] += per; });
   });
   return { totals, grandTotal, participants };
 }
@@ -3539,60 +4125,57 @@ function renderSettlementResult() {
   area.innerHTML = `<div style="font-size:13px;font-weight:500;margin-bottom:8px">개인별 정산 결과</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:8px">
       ${participants.map(p=>`<div style="background:var(--bg2);border-radius:var(--radius);padding:10px 12px">
-        <div style="font-size:12px;color:var(--text2)">${p.name}</div>
+        <div style="font-size:12px;color:var(--text2)">${esc(p.name)}</div>
         <div style="font-size:18px;font-weight:500">${(totals[p.key]||0).toLocaleString()}원</div>
       </div>`).join('')}
     </div>
-    <div style="font-size:12px;color:var(--text3)">총 지출 ${grandTotal.toLocaleString()}원 · 분담 합계 ${sumCheck.toLocaleString()}원</div>
+    <div style="font-size:12px;color:var(--text3)">총 지출 ${grandTotal.toLocaleString()}원 · 분담 합계 ${sumCheck.toLocaleString()}원${sumCheck!==grandTotal?` (1원 단위 반올림 차이 ${Math.abs(sumCheck-grandTotal).toLocaleString()}원)`:''}</div>
     <div style="margin-top:12px">
-      <div class="flex-between" style="margin-bottom:6px"><span style="font-size:13px;font-weight:500">오픈채팅 정산 요청 텍스트</span><button class="btn btn-sm" onclick="copySettlementText()"><i class="ti ti-copy"></i> 복사</button></div>
-      <div class="template-box" id="settlement-text">${buildSettlementText()}</div>
+      <div class="flex-between" style="margin-bottom:6px"><span style="font-size:13px;font-weight:500">오픈채팅 정산 요청 텍스트</span><button class="btn btn-sm" onclick="copySettlementText(this)"><i class="ti ti-copy"></i> 복사</button></div>
+      <div class="template-box" id="settlement-text">${esc(buildSettlementText())}</div>
     </div>`;
 }
 
 function buildSettlementText() {
   const b = settlementMode === 'bung' ? bungs.find(x=>x.id===settlementBungId) : null;
-  const title = b ? `${formatDate(b.date)} ${b.name} 정산 안내` : '모임비 정산 안내';
+  const title = b ? `${formatDate(b.date)} ${b.name} 정산 안내` : `${(settlementTitle||'').trim() || '모임비'} 정산 안내`;
   const { totals, participants } = computeSettlementTotals();
-  const itemLines = settlementItems.filter(it=>it.amount && it.participants.length>0).map(it => {
-    const names = it.participants.map(k => participants.find(p=>p.key===k)?.name || k).join(', ');
-    const per = Math.round(it.amount / it.participants.length);
-    return `${it.name||'항목'} ${it.amount.toLocaleString()}원 ÷ ${it.participants.length}명 = ${per.toLocaleString()}원 (${names})`;
+  const itemLines = settlementItems.map((it, idx) => ({it, idx, ps: itemParticipants(it)})).filter(x => x.it.amount && x.ps.length > 0).map(({it, idx, ps}) => {
+    const names = ps.map(k => participants.find(p=>p.key===k)?.name || k).join(', ');
+    const per = Math.round(it.amount / ps.length);
+    return `${settlementItemLabel(it, idx)} ${it.amount.toLocaleString()}원 ÷ ${ps.length}명 = ${per.toLocaleString()}원 (${names})`;
   }).join('\n');
   const personLines = participants.map(p => `▸ ${p.name}: ${(totals[p.key]||0).toLocaleString()}원`).join('\n');
   return `${title}\n\n${itemLines}\n\n${personLines}\n\n오픈채팅 송금으로 보내주세요!`;
 }
 
-window.copySettlementText = function() {
-  const text = document.getElementById('settlement-text').innerText;
-  navigator.clipboard.writeText(text).then(()=>{
-    const btn = event.target.closest('button');
-    btn.innerHTML = '<i class="ti ti-check"></i> 복사됨!';
-    setTimeout(()=>{ btn.innerHTML = '<i class="ti ti-copy"></i> 복사'; }, 2000);
-  });
+window.copySettlementText = function(btn) {
+  copyText(document.getElementById('settlement-text').innerText, btn);
 };
 
 window.saveSettlement = async function() {
-  const validItems = settlementItems.filter(it => it.name && it.amount && it.participants.length>0);
-  if (validItems.length === 0) { alert('정산 항목을 1개 이상 입력해주세요.'); return; }
   const { totals, grandTotal, participants } = computeSettlementTotals();
+  const validItems = settlementItems.map((it, idx) => ({it, idx, ps: itemParticipants(it)})).filter(x => x.it.amount && x.ps.length > 0);
+  if (validItems.length === 0) { alert('금액과 참여자가 있는 정산 항목을 1개 이상 입력해주세요.'); return; }
+  const b = settlementMode === 'bung' ? bungs.find(x => x.id === settlementBungId) : null;
+  if (settlementMode === 'bung' && !b) { alert('정산할 벙을 선택해주세요.'); return; }
   const data = {
     mode: settlementMode,
-    bungId: settlementMode==='bung' ? settlementBungId : null,
-    title: settlementMode==='bung' ? (bungs.find(x=>x.id===settlementBungId)?.name||'정산') : '직접 입력 정산',
-    date: settlementMode==='bung' ? (bungs.find(x=>x.id===settlementBungId)?.date||TODAY.toISOString().slice(0,10)) : TODAY.toISOString().slice(0,10),
-    items: validItems.map(it=>({name:it.name, amount:it.amount, participants:it.participants})),
-    participants: participants,
+    bungId: b ? b.id : null,
+    title: b ? b.name : ((settlementTitle||'').trim() || '직접 입력 정산'),
+    date: b ? b.date : todayStr(),
+    items: validItems.map(({it, idx, ps}) => ({name: settlementItemLabel(it, idx), amount: it.amount, participants: ps})),
+    participants,
     totals,
     grandTotal,
     text: buildSettlementText(),
     createdAt: serverTimestamp()
   };
   const ref = await addDoc(collection(db, 'settlements'), data);
-  if (settlementMode === 'bung' && settlementBungId) {
-    await updateDoc(doc(db, 'bungs', settlementBungId), { settlement: { settlementId: ref.id, grandTotal } });
-  }
+  if (b) await updateDoc(doc(db, 'bungs', b.id), { settlement: { settlementId: ref.id, grandTotal } });
   closeModal();
+  toast(`정산을 저장했어요 · 총 ${grandTotal.toLocaleString()}원`);
+  if (currentTab === 'settlement') renderSettlementList();
 };
 
 function renderSettlementList() {
@@ -3600,73 +4183,93 @@ function renderSettlementList() {
   if (!el) return;
   getDocs(query(collection(db,'settlements'), orderBy('createdAt','desc'))).then(snap => {
     const items = snap.docs.map(d => ({id:d.id, ...d.data()}));
-    if (items.length === 0) { el.innerHTML = '<div class="empty-state"><i class="ti ti-calculator"></i>정산 내역이 없습니다.</div>'; return; }
-    el.innerHTML = items.map(s => `<div style="background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;margin-bottom:10px">
+    if (items.length === 0) { el.innerHTML = '<div class="empty-state"><i class="ti ti-calculator"></i>정산 내역이 없습니다.<br><span style="font-size:12px">벙 카드의 "정산" 버튼이나 위의 "새 정산"으로 시작해보세요.</span></div>'; return; }
+    el.innerHTML = items.map(s => `<div class="bung-card">
       <div class="flex-between mb-1">
-        <div class="flex" style="min-width:0;flex:1;flex-wrap:wrap"><strong>${s.title}</strong><span style="font-size:12px;color:var(--text2)">${formatDate(s.date)}</span></div>
+        <div class="flex" style="min-width:0;flex:1;flex-wrap:wrap"><strong>${esc(s.title)}</strong><span style="font-size:12px;color:var(--text2)">${formatDate(s.date)}</span></div>
         <div class="flex" style="gap:4px;flex-shrink:0">
           <button class="btn btn-sm" onclick="viewSettlement('${s.id}')"><i class="ti ti-eye"></i> 보기</button>
           <button class="btn btn-sm btn-danger edit-only" onclick="deleteSettlement('${s.id}','${s.bungId||''}')"><i class="ti ti-trash"></i></button>
         </div>
       </div>
-      <div style="font-size:12px;color:var(--text2)">총 ${(s.grandTotal||0).toLocaleString()}원 · ${(s.participants||[]).map(p=>p.name).join(', ')}</div>
+      <div style="font-size:12px;color:var(--text2)">총 ${(s.grandTotal||0).toLocaleString()}원 · ${(s.participants||[]).length}명 · ${(s.participants||[]).map(p=>esc(p.name)).join(', ')}</div>
     </div>`).join('');
-  });
+  }).catch(e => { el.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i>정산 내역을 불러오지 못했습니다.<br><span style="font-size:12px">${esc(e.message)}</span></div>`; });
 }
 
 window.viewSettlement = async function(id) {
   const snap = await getDoc(doc(db,'settlements',id));
   if (!snap.exists()) return;
   const s = snap.data();
-  openModal(`<div class="modal-title"><i class="ti ti-receipt-2" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>${s.title}</div>
-    <div class="template-box" style="margin-bottom:16px">${s.text}</div>
+  openModal(`<div class="modal-title"><i class="ti ti-receipt-2" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>${esc(s.title)}</div>
+    <div class="template-box" style="margin-bottom:16px">${esc(s.text)}</div>
     <div class="flex" style="justify-content:flex-end;gap:8px">
       <button class="btn" onclick="closeModal()">닫기</button>
-      <button class="btn btn-primary" onclick="copyViewedSettlement(this)" data-text="${encodeURIComponent(s.text)}"><i class="ti ti-copy"></i> 복사</button>
+      <button class="btn btn-primary" onclick="copyViewedSettlement(this)" data-text="${encodeURIComponent(s.text||'')}"><i class="ti ti-copy"></i> 복사</button>
     </div>`);
 };
 
 window.copyViewedSettlement = function(btn) {
-  const text = decodeURIComponent(btn.getAttribute('data-text'));
-  navigator.clipboard.writeText(text).then(()=>{
-    btn.innerHTML = '<i class="ti ti-check"></i> 복사됨!';
-    setTimeout(()=>{ btn.innerHTML = '<i class="ti ti-copy"></i> 복사'; }, 2000);
-  });
+  copyText(decodeURIComponent(btn.getAttribute('data-text')), btn);
 };
 
 window.deleteSettlement = async function(id, bungId) {
   if (!confirm('이 정산 내역을 삭제할까요?')) return;
   await deleteDoc(doc(db,'settlements',id));
-  if (bungId) await updateDoc(doc(db,'bungs',bungId), { settlement: null });
+  if (bungId && bungs.some(b => b.id === bungId && b.settlement && b.settlement.settlementId === id)) await updateDoc(doc(db,'bungs',bungId), { settlement: null });
   renderSettlementList();
+  toast('정산 내역을 삭제했어요', 'info');
 };
+
+// 클립보드 복사: 카카오톡 인앱 브라우저처럼 clipboard API가 막힌 환경에서도 동작하도록 예비 방식 사용
+function copyText(text, btn) {
+  const done = () => {
+    if (btn) {
+      if (!btn.dataset.orig) btn.dataset.orig = btn.innerHTML;
+      btn.innerHTML = '<i class="ti ti-check"></i> 복사됨!';
+      clearTimeout(btn._copyTimer);
+      btn._copyTimer = setTimeout(() => { btn.innerHTML = btn.dataset.orig; }, 2000);
+    }
+    toast('복사했어요. 카카오톡에 붙여넣으세요');
+  };
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch(e) {}
+    ta.remove();
+    if (ok) done(); else toast('복사하지 못했어요. 텍스트를 길게 눌러 직접 복사해주세요', 'error');
+  };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
+  else fallback();
+}
+window.copyText = copyText;
 
 window.openTemplate = function(id) {
   const b=bungs.find(x=>x.id===id);if(!b)return;
-  const host=b.hostId?members.find(x=>x.id===b.hostId):null;
-  const d=new Date(b.date);
+  const d=parseDateStr(b.date);
   const weekdays=['일','월','화','수','목','금','토'];
   const dateStr=`${d.getMonth()+1}월 ${d.getDate()}일(${weekdays[d.getDay()]})`;
   const template=`일시 : ${dateStr}\n장소 : ${b.place||'미정'}\n시간 : ${b.time||'미정'}\n인원 : ${(b.attendees||[]).length}명\n주제 : ${b.topic||'노래방'}${b.memo?`\n\n${b.memo}`:''}`;
   openModal(`<div class="modal-title"><i class="ti ti-speakerphone" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>벙 공지 템플릿</div>
-    <div class="template-box" id="template-text">${template}</div>
+    <div class="template-box" id="template-text">${esc(template)}</div>
     <div class="alert alert-info" style="margin-bottom:12px"><i class="ti ti-info-circle"></i>복사 후 카카오톡에 붙여넣으세요.</div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">닫기</button>
-    <button class="btn btn-primary" onclick="copyTemplate()"><i class="ti ti-copy"></i> 복사</button></div>`);
+    <button class="btn btn-primary" onclick="copyTemplate(this)"><i class="ti ti-copy"></i> 복사</button></div>`);
 };
 
-window.copyTemplate = function() {
-  const text=document.getElementById('template-text').innerText;
-  navigator.clipboard.writeText(text).then(()=>{
-    const btn=event.target.closest('button');
-    btn.innerHTML='<i class="ti ti-check"></i> 복사됨!';
-    setTimeout(()=>{btn.innerHTML='<i class="ti ti-copy"></i> 복사';},2000);
-  });
+window.copyTemplate = function(btn) {
+  copyText(document.getElementById('template-text').innerText, btn);
 };
 
 window.openBungRecap = function(id) {
   const b = bungs.find(x=>x.id===id); if(!b) return;
-  const allSorted = [...bungs].sort((a,c)=>new Date(a.date)-new Date(c.date));
+  const allSorted = [...bungs].sort((a,c)=>(a.date||'').localeCompare(c.date||''));
   const idx = allSorted.findIndex(x=>x.id===id);
   const priorBungs = allSorted.slice(0, idx);
   const attendeeIds = b.attendees||[];
@@ -3702,112 +4305,159 @@ window.openBungRecap = function(id) {
   const recapText = lines.join('\n');
 
   openModal(`<div class="modal-title"><i class="ti ti-sparkles" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>벙 회고</div>
-    <div class="template-box" id="recap-text" style="white-space:pre-line">${recapText}</div>
+    <div class="template-box" id="recap-text" style="white-space:pre-line">${esc(recapText)}</div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">닫기</button>
-    <button class="btn btn-primary" onclick="copyRecapText()"><i class="ti ti-copy"></i> 복사</button></div>`);
+    <button class="btn btn-primary" onclick="copyRecapText(this)"><i class="ti ti-copy"></i> 복사</button></div>`);
 };
 
-window.copyRecapText = function() {
-  const text=document.getElementById('recap-text').innerText;
-  navigator.clipboard.writeText(text).then(()=>{
-    const btn=event.target.closest('button');
-    btn.innerHTML='<i class="ti ti-check"></i> 복사됨!';
-    setTimeout(()=>{btn.innerHTML='<i class="ti ti-copy"></i> 복사';},2000);
-  });
+window.copyRecapText = function(btn) {
+  copyText(document.getElementById('recap-text').innerText, btn);
 };
 
 window.openGhostMessage = function() {
-  const cd=getGhostCycleDate(ghostSelectedOffset);
+  const cd=getGhostCycleDate(resolvedGhostOffset());
   const ghosts=members.filter(m=>getMemberStatus(m,cd)==='ghost');
   if(ghosts.length===0){openModal(`<div class="modal-title">퇴출 메시지</div><div class="alert alert-success"><i class="ti ti-check"></i>퇴출 대상자가 없습니다.</div><div class="flex" style="justify-content:flex-end"><button class="btn btn-primary" onclick="closeModal()">확인</button></div>`);return;}
   const nameList=ghosts.map(m=>`• ${m.name}`).join('\n');
   const msg=`안녕하세요! KIKU 운영진입니다 🎤\n\n${formatDate(cd)} 기준 유령 회원 정리를 진행합니다.\n\n아래 회원분들은 최근 2개월간 벙 참여 기록이 없어 퇴출 예정입니다.\n\n${nameList}\n\n계속 활동을 원하시는 분은 운영진에게 연락 주세요!\n연락 없으실 경우 자동 퇴출 처리됩니다. 🙏`;
   openModal(`<div class="modal-title">퇴출 메시지</div>
-    <div class="template-box" id="ghost-msg-text">${msg}</div>
+    <div class="template-box" id="ghost-msg-text">${esc(msg)}</div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">닫기</button>
-    <button class="btn btn-primary" onclick="copyGhostMsg()"><i class="ti ti-copy"></i> 복사</button></div>`);
+    <button class="btn btn-primary" onclick="copyGhostMsg(this)"><i class="ti ti-copy"></i> 복사</button></div>`);
 };
 
-window.copyGhostMsg = function() {
-  const text=document.getElementById('ghost-msg-text').innerText;
-  navigator.clipboard.writeText(text).then(()=>{
-    const btn=event.target.closest('button');
-    btn.innerHTML='<i class="ti ti-check"></i> 복사됨!';
-    setTimeout(()=>{btn.innerHTML='<i class="ti ti-copy"></i> 복사';},2000);
-  });
+window.copyGhostMsg = function(btn) {
+  copyText(document.getElementById('ghost-msg-text').innerText, btn);
 };
 
 window.confirmReset = function() {
+  const cur = getGhostCycleDate(0);
   openModal(`<div class="modal-title" style="color:var(--danger)"><i class="ti ti-alert-triangle" style="font-size:17px;vertical-align:-3px;margin-right:4px"></i>초기화 확인</div>
-    <div class="alert alert-danger" style="margin-bottom:12px">모든 회원의 <strong>운영진 연락 여부</strong>를 초기화합니다.</div>
+    <div class="alert alert-danger" style="margin-bottom:12px"><div>모든 회원의 <strong>운영진 연락 여부</strong>를 초기화하고, 이번 정리(${formatDate(cur)})를 <strong>완료</strong>로 표시합니다.<br><span style="font-size:12px">퇴출 처리(회원 삭제)를 먼저 마친 뒤에 실행하세요.</span></div></div>
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-danger" onclick="doReset()">초기화 실행</button></div>`);
 };
 
+// 이번 정리를 완료로 기록 (이 기기 + 가능하면 Firestore에도 저장해서 다른 운영진 화면에도 반영)
+async function saveGhostDoneCycle(cycle) {
+  rememberGhostDoneCycle(cycle);
+  try {
+    await setDoc(doc(db, 'settings', 'ghostCleanup'), {doneCycle: cycle, doneAt: serverTimestamp(), doneBy: currentUser ? authorDisplayName() : ''});
+  } catch(e) {
+    console.warn('정리 완료 상태를 서버에 저장하지 못했어요 (이 기기에만 기록됨):', e.message);
+  }
+  ghostSelectedOffset = null;
+  renderAll();
+}
+
 window.doReset = async function() {
-  for(const m of members) await updateDoc(doc(db,'members',m.id),{contacted:false});
+  const cycle = toDateStr(getGhostCycleDate(0));
+  const targets = members.filter(m => m.contacted);
+  for (const m of targets) await updateDoc(doc(db,'members',m.id),{contacted:false});
   closeModal();
+  await saveGhostDoneCycle(cycle);
+  toast(`이번 정리(${formatDate(cycle)}) 완료! ${targets.length ? `연락 여부 ${targets.length}명 초기화` : '초기화할 연락 기록은 없었어요'}`);
 };
 
-window.handleAttendeeInput = function(e,mode){if(e.key==='Enter'||e.key===','){e.preventDefault();handleAttendeeAdd(mode);}};
-window.handleAttendeeAdd = function(mode){
-  const inputId=mode==='add'?'member-search':'member-search-edit';
-  const input=document.getElementById(inputId);if(!input)return;
-  const names=input.value.split(/[,،]/).map(n=>n.trim()).filter(Boolean);
-  names.forEach(name=>{const m=members.find(x=>x.name===name);if(m)addAttendeeTag(m.id,m.name,mode);});
-  input.value='';updateHostSelect(mode);
+window.markGhostCycleDone = async function() {
+  const cycle = toDateStr(getGhostCycleDate(0));
+  if (!confirm(`이번 정리(${formatDate(cycle)})를 이미 마치셨나요?\n완료로 표시하면 대시보드·회원 명단이 다음 정리 기준으로 바뀌어요. (회원 데이터는 바뀌지 않아요)`)) return;
+  await saveGhostDoneCycle(cycle);
+  toast(`이번 정리(${formatDate(cycle)})를 완료로 표시했어요`);
 };
 
-window.addAttendeeTag = function(id,name,mode){
-  const tagArea=document.getElementById(`${mode}-tag-area`);
-  const list=document.getElementById(`${mode}-attendee-list`);
-  if(!tagArea||tagArea.querySelector(`[data-id="${id}"]`))return;
-  const tag=document.createElement('span');
-  tag.className='attendee-tag';tag.setAttribute('data-id',id);
-  tag.innerHTML=`${name} <span style="cursor:pointer;margin-left:2px" onclick="removeAttendeeTag(this,'${mode}')">×</span>`;
-  tagArea.appendChild(tag);
-  if(list){const cb=list.querySelector(`.attend-check[value="${id}"]`);if(cb)cb.checked=true;}
+// ── 벙 참석자 선택기 동작 ───────────────────────────────────────────
+function attendeeTagsHTML(mode, popId) {
+  const ids = attendeeOrder[mode].filter(id => members.some(m => m.id === id));
+  if (ids.length === 0) return '<span class="tag-empty">아직 선택한 참석자가 없어요</span>';
+  return ids.map(id => {
+    const m = members.find(x => x.id === id);
+    return `<span class="attendee-tag${id === popId ? ' pop' : ''}" data-id="${m.id}">${esc(m.name)}<span class="tag-x" onclick="removeAttendee('${mode}','${m.id}')" title="빼기">×</span></span>`;
+  }).join('') + `<span class="tag-empty" style="margin-left:2px">${ids.length}명</span>`;
+}
+
+function setAttendee(mode, id, on) {
+  const cb = document.querySelector(`#${mode}-attendee-list .attend-check[value="${id}"]`);
+  if (cb) cb.checked = on;
+  const order = attendeeOrder[mode];
+  const idx = order.indexOf(id);
+  if (on && idx === -1) order.push(id);
+  if (!on && idx !== -1) order.splice(idx, 1);
+  const area = document.getElementById(`${mode}-tag-area`);
+  if (area) area.innerHTML = attendeeTagsHTML(mode, on ? id : null);
   updateHostSelect(mode);
+}
+
+window.onAttendeeCheck = function(mode, cb) { setAttendee(mode, cb.value, cb.checked); };
+window.removeAttendee = function(mode, id) { setAttendee(mode, id, false); };
+
+window.handleAttendeeInput = function(e, mode) {
+  if ((e.key === ',' || e.key === '，') && !e.isComposing) { e.preventDefault(); handleAttendeeAdd(mode); return; }
+  onEnterKey(e, () => handleAttendeeAdd(mode));
 };
 
-window.removeAttendeeTag = function(el,mode){
-  const tag=el.parentElement;const id=tag.getAttribute('data-id');
-  const list=document.getElementById(`${mode}-attendee-list`);
-  tag.remove();
-  if(list){const cb=list.querySelector(`.attend-check[value="${id}"]`);if(cb)cb.checked=false;}
-  updateHostSelect(mode);
+// 입력 중인 이름(마지막 쉼표 뒤)으로 아래 회원 목록을 바로 걸러서 보여줌 (이름·별명, 대소문자 무시)
+window.onAttendeeQuery = function(mode) {
+  const input = document.getElementById(mode === 'edit' ? 'member-search-edit' : 'member-search');
+  const key = normName((input?.value || '').split(/[,，]/).pop());
+  document.querySelectorAll(`#${mode}-attendee-list .attendee-label`).forEach(l => {
+    l.classList.toggle('is-hidden', !!key && !(l.dataset.search || '').includes(key));
+  });
+  const msg = document.getElementById(`${mode}-picker-msg`);
+  if (msg) msg.textContent = '';
 };
 
-window.toggleAttendeeTag = function(label,mode){
-  const id=label.getAttribute('data-id'),name=label.getAttribute('data-name');
-  const cb=label.querySelector('.attend-check');
-  const tagArea=document.getElementById(`${mode}-tag-area`);if(!tagArea)return;
-  if(cb.checked){const tag=tagArea.querySelector(`[data-id="${id}"]`);if(tag)tag.remove();cb.checked=false;}
-  else addAttendeeTag(id,name,mode);
-  updateHostSelect(mode);
+window.handleAttendeeAdd = function(mode) {
+  const input = document.getElementById(mode === 'edit' ? 'member-search-edit' : 'member-search');
+  if (!input) return;
+  const tokens = input.value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  if (!tokens.length) return;
+  const keep = [], notes = [];
+  tokens.forEach(t => {
+    const r = resolveMemberInput(t);
+    if (r.member) setAttendee(mode, r.member.id, true);
+    else if (r.candidates) { keep.push(t); notes.push(`"${t}" → ${r.candidates.map(m => m.name).join(', ')} 중 누구인지 아래 목록에서 골라주세요`); }
+    else { keep.push(t); notes.push(`"${t}"에 해당하는 회원이 없어요 (회원 명단에서 별명을 등록해두면 별명으로도 찾을 수 있어요)`); }
+  });
+  input.value = keep.join(', ');
+  onAttendeeQuery(mode);
+  const msg = document.getElementById(`${mode}-picker-msg`);
+  if (msg) msg.textContent = notes.join(' · ');
+  if (keep.length) { input.classList.remove('shake'); void input.offsetWidth; input.classList.add('shake'); }
+  input.focus();
 };
 
 window.updateHostSelect = function(mode){
-  const prefix=mode==='add'?'b':'eb';
-  const hostSel=document.getElementById(`${prefix}-host`);
-  if(!hostSel)return;
-  const tagArea=document.getElementById(`${mode}-tag-area`);if(!tagArea)return;
-  const tags=[...tagArea.querySelectorAll('.attendee-tag')];
-  const currentVal=hostSel.value;
-  hostSel.innerHTML='<option value="">선택 안 함</option>'+tags.map(tag=>{
-    const id=tag.getAttribute('data-id');
-    const m=members.find(x=>x.id===id);
-    return m?`<option value="${m.id}" ${currentVal===m.id?'selected':''}>${m.name}</option>`:'';
+  const prefix = mode==='add' ? 'b' : 'eb';
+  const hostSel = document.getElementById(`${prefix}-host`);
+  if (!hostSel) return;
+  const currentVal = hostSel.value;
+  hostSel.innerHTML = '<option value="">선택 안 함</option>' + attendeeOrder[mode].map(id => {
+    const m = members.find(x => x.id === id);
+    return m ? `<option value="${m.id}" ${currentVal===m.id?'selected':''}>${esc(m.name)}</option>` : '';
   }).join('');
 };
 
+// 운영진 전용 버튼은 body.is-admin 여부로 CSS에서 한 번에 보이기/숨기기 처리
+// (예전에는 화면이 다시 그려지면 일반 회원에게도 수정/삭제 버튼이 보였음)
 function updateEditMode(){
-  document.querySelectorAll('.edit-only').forEach(el=>el.style.display=isAdmin?'':'none');
+  document.body.classList.toggle('is-admin', !!isAdmin);
 }
 
+// ── 팝업(모달) ──────────────────────────────────────────────────────
+let _modalCloseTimer = null;
 function openModal(html, size){
-  document.getElementById('modal-content').innerHTML = html;
-  document.getElementById('modal-content').classList.toggle('modal-lg', size === 'lg');
-  document.getElementById('modal-backdrop').classList.add('open');
+  const backdrop = document.getElementById('modal-backdrop');
+  const content = document.getElementById('modal-content');
+  clearTimeout(_modalCloseTimer);
+  backdrop.classList.remove('closing');
+  const wasOpen = backdrop.classList.contains('open');
+  content.innerHTML = html;
+  content.classList.toggle('modal-lg', size === 'lg');
+  backdrop.classList.add('open');
+  if (!wasOpen) content.scrollTop = 0;
+  // 첫 입력칸(autofocus)에 커서. 휴대폰에서는 키보드가 갑자기 올라오지 않도록 마우스 환경에서만.
+  const af = content.querySelector('[autofocus]');
+  if (af && window.matchMedia('(hover:hover) and (pointer:fine)').matches) setTimeout(() => af.focus(), 30);
 }
 let _icUnsavedActive = false; // 이상형월드컵 제작/플레이 중 닫기 보호
 window.closeModal = function(){
@@ -3815,7 +4465,13 @@ window.closeModal = function(){
     if (!confirm('작성/진행 중인 내용이 사라집니다. 정말 닫을까요?')) return false;
     _icUnsavedActive = false;
   }
-  document.getElementById('modal-backdrop').classList.remove('open');
+  // 노래 토너먼트 투표창을 바깥 클릭·Esc로 닫아도 실시간 구독이 남아 창이 다시 뜨는 일이 없도록 정리
+  if (activeTournamentUnsub) { activeTournamentUnsub(); activeTournamentUnsub = null; activeTournamentData = null; }
+  const backdrop = document.getElementById('modal-backdrop');
+  if (!backdrop.classList.contains('open')) return true;
+  backdrop.classList.add('closing');
+  clearTimeout(_modalCloseTimer);
+  _modalCloseTimer = setTimeout(() => backdrop.classList.remove('open', 'closing'), 160);
   return true;
 };
 // 텍스트 드래그 중 마우스가 배경으로 나가서 click이 발생해도 닫히지 않도록,
@@ -3824,19 +4480,42 @@ let modalMouseDownOnBackdrop = false;
 document.getElementById('modal-backdrop').addEventListener('mousedown',function(e){modalMouseDownOnBackdrop = (e.target===this);});
 document.getElementById('modal-backdrop').addEventListener('click',function(e){if(e.target===this && modalMouseDownOnBackdrop)closeModal();modalMouseDownOnBackdrop=false;});
 
+// Esc로 팝업/사진 닫기, 사진 보기에서는 ← → 로 넘기기
+document.addEventListener('keydown', e => {
+  if (e.isComposing) return;
+  const lightbox = document.getElementById('kiku-lightbox');
+  if (lightbox) {
+    if (e.key === 'Escape') closeLightbox();
+    else if (e.key === 'ArrowLeft') stepLightbox(-1);
+    else if (e.key === 'ArrowRight') stepLightbox(1);
+    return;
+  }
+  if (e.key !== 'Escape') return;
+  const backdrop = document.getElementById('modal-backdrop');
+  if (backdrop.classList.contains('open') && !backdrop.classList.contains('closing')) closeModal();
+});
+
 window.toggleTheme = function(){
   const root=document.documentElement;
   const next=root.getAttribute('data-theme')==='dark'?'light':'dark';
+  root.classList.add('theme-anim');
   root.setAttribute('data-theme',next);
-  localStorage.setItem('kiku-theme',next);
+  try { localStorage.setItem('kiku-theme',next); } catch(e) {}
   document.getElementById('theme-icon').className=next==='dark'?'ti ti-sun':'ti ti-moon';
+  setTimeout(() => root.classList.remove('theme-anim'), 400);
 };
 
 function initTheme(){
-  const saved=localStorage.getItem('kiku-theme');
+  let saved = null;
+  try { saved = localStorage.getItem('kiku-theme'); } catch(e) {}
   const prefersDark=window.matchMedia('(prefers-color-scheme:dark)').matches;
   const theme=saved||(prefersDark?'dark':'light');
   document.documentElement.setAttribute('data-theme',theme);
   const icon=document.getElementById('theme-icon');
   if(icon)icon.className=theme==='dark'?'ti ti-sun':'ti ti-moon';
 }
+
+// 저장·삭제 버튼 중복 클릭 방지 (처리 중에는 버튼에 로딩 표시)
+['addNotice','editNotice','addPost','editPost','addComment','addMember','editMember','saveAliases','saveAliasManager',
+ 'addBung','editBung','deleteBung','deleteMember','saveSettlement','submitRollingMessage','addPlaylistSong',
+ 'requestProfileLink','saveMyProfile','saveRole','doReset','markGhostCycleDone'].forEach(guardAction);
