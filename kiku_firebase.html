@@ -465,6 +465,7 @@ html.theme-anim,html.theme-anim *{transition:background-color .35s ease,color .3
             <span class="text-sm text-secondary" id="ghost-calc-info"></span>
             <button class="btn btn-info btn-sm edit-only" onclick="openGhostMessage()"><i class="ti ti-message"></i>퇴출 메시지</button>
             <button class="btn btn-sm edit-only" id="ghost-done-btn" onclick="markGhostCycleDone()" style="display:none" title="초기화 없이 이번 정리를 완료로만 표시"><i class="ti ti-check"></i>이미 정리했어요</button>
+            <button class="btn btn-sm edit-only" id="ghost-undo-btn" onclick="undoGhostCycleDone()" style="display:none" title="이번 정리 완료 표시 되돌리기"><i class="ti ti-arrow-back-up"></i>완료 취소</button>
             <button class="btn btn-danger btn-sm edit-only" id="reset-btn" onclick="confirmReset()" style="display:none"><i class="ti ti-refresh"></i>초기화</button>
           </div>
         </div>

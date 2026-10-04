@@ -101,14 +101,18 @@ function findAliasConflicts(aliases, selfId) {
 function onEnterKey(e, fn) {
   if (e.key !== 'Enter' || e.shiftKey) return;
   e.preventDefault();
+  const el = e.target;
   if (e.isComposing) {
     // 조합이 끝난 뒤 실행 (compositionend가 오지 않는 키보드도 있어서 잠시 후 한 번 더 시도, 실행은 한 번만)
     let fired = false;
     const run = () => { if (!fired) { fired = true; setTimeout(fn, 0); } };
-    e.target.addEventListener('compositionend', run, {once: true});
+    el._kkEnterAt = Date.now();
+    el.addEventListener('compositionend', run, {once: true});
     setTimeout(run, 300);
     return;
   }
+  // macOS 한글 입력기는 조합 중 엔터 직후 일반 엔터를 한 번 더 보냄 → 위에서 이미 예약했으니 건너뜀
+  if (el._kkEnterAt && Date.now() - el._kkEnterAt < 600) { el._kkEnterAt = 0; return; }
   fn();
 }
 window.onEnterKey = onEnterKey;
@@ -127,19 +131,21 @@ function toast(msg, type = 'success') {
 }
 
 // 저장 버튼을 빠르게 두 번 눌러 같은 데이터가 두 번 저장되는 것을 막는다.
+// 같은 동작·같은 대상(예: 같은 회원 삭제)이 처리 중이면 막고, 다른 대상은 그대로 진행.
 // 처리 중에는 누른 버튼을 잠깐 비활성화(로딩 표시)하고, 끝나면 원래대로 돌린다.
 const _busyActions = new Set();
 function guardAction(name) {
   const fn = window[name];
   window[name] = async function(...args) {
-    if (_busyActions.has(name)) return;
+    const key = name + ':' + JSON.stringify(args);
+    if (_busyActions.has(key)) { toast('처리 중이에요. 잠시만 기다려주세요', 'info'); return; }
     const btn = window.event?.target?.closest?.('button');
-    _busyActions.add(name);
+    _busyActions.add(key);
     if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
     try { return await fn.apply(this, args); }
     catch (e) { console.error(e); toast('처리 중 오류가 발생했습니다: ' + (e.message || e), 'error'); }
     finally {
-      _busyActions.delete(name);
+      _busyActions.delete(key);
       if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('is-busy'); }
     }
   };
@@ -313,9 +319,9 @@ async function loadData() {
       renderDashboardAchievements();
       checkAndFinalizeSeasonAwards();
     });
-    // 유령 정리 완료 기록 (다른 운영진이 정리를 마치면 내 화면도 다음 정리 기준으로 바뀜). 권한이 없으면 무시.
+    // 유령 정리 완료 기록 (다른 운영진이 정리를 마치거나 취소하면 내 화면도 같이 바뀜). 읽기 권한이 없으면 무시.
     const ghostDoneUnsub = onSnapshot(doc(db, 'settings', 'ghostCleanup'), snap => {
-      if (snap.exists() && rememberGhostDoneCycle(snap.data().doneCycle)) renderAll();
+      if (snap.exists() && setGhostDoneCycleLocal(snap.data().doneCycle)) { ghostSelectedOffset = null; renderAll(); }
     }, () => {});
     unsubscribers = [memberUnsub, bungUnsub, noticeUnsub, postUnsub, playlistUnsub, seasonAwardUnsub, ghostDoneUnsub];
     setSyncStatus('connected', '실시간 동기화 중');
@@ -867,14 +873,21 @@ window.openAddMember = function() {
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="addMember()">추가</button></div>`);
 };
 
-// 이름/별명이 다른 회원과 겹치면 입력할 때 누구인지 헷갈리므로 저장 전에 한 번 확인
-function confirmNameAndAliases(name, aliases, selfId) {
+// 이름/별명이 다른 회원과 겹치면 입력할 때 누구인지 헷갈리므로 저장 전에 한 번 확인.
+// 수정할 때는 새로 바뀐 이름·새로 추가한 별명만 확인 (메모만 고쳐도 매번 묻지 않도록)
+function newlyAddedAliases(aliases, prev) {
+  const before = new Set(memberAliases(prev).map(normName));
+  return aliases.filter(a => !before.has(normName(a)));
+}
+function confirmNameAndAliases(name, aliases, selfId, prev) {
   const k = normName(name);
-  const sameName = members.find(m => m.id !== selfId && normName(m.name) === k);
-  if (sameName && !confirm(`이미 "${sameName.name}" 회원이 있어요. 같은 이름으로 저장할까요?`)) return false;
-  const aliasOwner = members.find(m => m.id !== selfId && memberAliases(m).some(a => normName(a) === k));
-  if (aliasOwner && !confirm(`"${name}"은(는) ${aliasOwner.name} 회원의 별명이에요. 그래도 이 이름으로 저장할까요?`)) return false;
-  const conflicts = findAliasConflicts(aliases, selfId);
+  if (!prev || normName(prev.name) !== k) {
+    const sameName = members.find(m => m.id !== selfId && normName(m.name) === k);
+    if (sameName && !confirm(`이미 "${sameName.name}" 회원이 있어요. 같은 이름으로 저장할까요?`)) return false;
+    const aliasOwner = members.find(m => m.id !== selfId && memberAliases(m).some(a => normName(a) === k));
+    if (aliasOwner && !confirm(`"${name}"은(는) ${aliasOwner.name} 회원의 별명이에요. 그래도 이 이름으로 저장할까요?`)) return false;
+  }
+  const conflicts = findAliasConflicts(prev ? newlyAddedAliases(aliases, prev) : aliases, selfId);
   if (conflicts.length && !confirm(`다른 회원과 겹치는 별명이 있어요.\n${conflicts.join('\n')}\n\n그래도 저장할까요? (겹치는 별명으로 입력하면 누구인지 직접 골라야 해요)`)) return false;
   return true;
 }
@@ -909,7 +922,7 @@ window.editMember = async function(id) {
   if (!m) return;
   const name = document.getElementById('e-name').value.trim() || m.name;
   const aliases = parseAliasInput(document.getElementById('e-aliases').value, name);
-  if (!confirmNameAndAliases(name, aliases, id)) return;
+  if (!confirmNameAndAliases(name, aliases, id, m)) return;
   await updateDoc(doc(db, 'members', id), {
     name, aliases,
     joinDate: document.getElementById('e-join').value || m.joinDate,
@@ -935,7 +948,7 @@ window.saveAliases = async function(id) {
   const input = document.getElementById('alias-input');
   if (!m || !input) return;
   const aliases = parseAliasInput(input.value, m.name);
-  const conflicts = findAliasConflicts(aliases, id);
+  const conflicts = findAliasConflicts(newlyAddedAliases(aliases, m), id);
   if (conflicts.length && !confirm(`다른 회원과 겹치는 별명이 있어요.\n${conflicts.join('\n')}\n\n그래도 저장할까요?`)) return;
   await updateDoc(doc(db, 'members', id), {aliases});
   closeModal();
@@ -977,7 +990,7 @@ window.saveAliasManager = async function() {
   // 저장 후의 상태 기준으로 겹치는 별명 확인
   const next = members.map(m => ({...m, aliases: (changes.find(c => c.m.id === m.id) || {}).aliases || memberAliases(m)}));
   const conflicts = [];
-  changes.forEach(({m, aliases}) => aliases.forEach(a => {
+  changes.forEach(({m, aliases}) => newlyAddedAliases(aliases, m).forEach(a => {
     const k = normName(a);
     next.forEach(o => { if (o.id !== m.id && memberKeys(o).includes(k)) conflicts.push(`"${a}" (${m.name}) ↔ ${o.name}`); });
   }));
@@ -1341,11 +1354,13 @@ function renderGallery() {
 
 // 사진 크게 보기: ← → 키 / 좌우 버튼 / 스와이프로 넘기기, Esc나 바깥 클릭으로 닫기
 let lightboxIdx = 0;
-window.closeLightbox = function() {
+window.closeLightbox = function(opts) {
   const lb = document.getElementById('kiku-lightbox');
-  if (!lb) return;
+  if (!lb || lb.dataset.closing) return;
+  lb.dataset.closing = '1';
   lb.style.opacity = '0';
   setTimeout(() => lb.remove(), 180);
+  if (!(opts && opts.fromHistory)) popOverlayHistory();
 };
 window.stepLightbox = function(dir) {
   if (galleryFiles.length === 0) return;
@@ -1361,13 +1376,14 @@ window.openLightbox = function(idx) {
   lightboxIdx = idx;
   const lb = document.createElement('div');
   lb.id = 'kiku-lightbox';
-  lb.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:300;display:flex;align-items:center;justify-content:center;padding:1rem;animation:kk-fade-in .2s ease both;transition:opacity .18s ease';
+  // fill-mode를 backwards로 둬야 애니메이션이 끝난 뒤 opacity 전환(닫기·사진 넘기기 페이드)이 적용됨
+  lb.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:300;display:flex;align-items:center;justify-content:center;padding:1rem;animation:kk-fade-in .2s ease backwards;transition:opacity .18s ease';
   const navBtn = 'position:absolute;top:50%;transform:translateY(-50%);color:#fff;font-size:26px;cursor:pointer;background:rgba(255,255,255,0.12);border:none;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center';
   lb.innerHTML = `<button onclick="closeLightbox()" aria-label="닫기" style="position:absolute;top:1rem;right:1rem;color:#fff;font-size:24px;cursor:pointer;background:none;border:none"><i class="ti ti-x"></i></button>
     ${galleryFiles.length > 1 ? `<button onclick="stepLightbox(-1)" aria-label="이전 사진" style="${navBtn};left:1rem"><i class="ti ti-chevron-left"></i></button>
     <button onclick="stepLightbox(1)" aria-label="다음 사진" style="${navBtn};right:1rem"><i class="ti ti-chevron-right"></i></button>
     <div id="kiku-lightbox-count" style="position:absolute;bottom:1rem;left:0;right:0;text-align:center;color:rgba(255,255,255,.75);font-size:12px">${idx + 1} / ${galleryFiles.length}</div>` : ''}
-    <img id="kiku-lightbox-img" src="${esc(galleryFiles[idx].url)}" style="max-width:100%;max-height:90vh;object-fit:contain;border-radius:var(--radius);transition:opacity .12s ease;animation:kk-modal-in .25s ease both" alt="">`;
+    <img id="kiku-lightbox-img" src="${esc(galleryFiles[idx].url)}" style="max-width:100%;max-height:90vh;object-fit:contain;border-radius:var(--radius);transition:opacity .12s ease;animation:kk-modal-in .25s ease backwards" alt="">`;
   lb.addEventListener('click', e => { if (e.target === lb) closeLightbox(); });
   let touchX = null;
   lb.addEventListener('touchstart', e => { touchX = e.touches[0].clientX; }, {passive: true});
@@ -1378,6 +1394,7 @@ window.openLightbox = function(idx) {
     touchX = null;
   });
   document.body.appendChild(lb);
+  pushOverlayHistory();
 };
 
 window.uploadPhotos = async function(event) {
@@ -1449,15 +1466,18 @@ let ghostSelectedOffset = null; // null = 아직 직접 고르지 않음 → 진
 //  · 완료 전: 대시보드·회원 명단·유령 정리 탭 모두 "이번 기산일" 기준 (지금 정리해야 할 대상)
 //  · 완료 후: "다음 기산일" 기준 미리보기 (다음 정리 때 위험한 회원)
 // 예전에는 기산일 다음 날부터 바로 다음 기산일 기준으로 바뀌어서, 지난주에 온 회원까지 모두 "유령 대상"으로 보였음.
+// 서버(settings/ghostCleanup)에 기록이 있으면 그 값이 기준이고, 없거나 읽을 수 없을 때만 이 기기 기록을 사용.
 let ghostDoneCycle = (() => { try { return localStorage.getItem('kiku-ghost-done') || null; } catch(e) { return null; } })();
-function rememberGhostDoneCycle(v) {
-  if (!v || (ghostDoneCycle && ghostDoneCycle >= v)) return false;
+function setGhostDoneCycleLocal(v) {
+  v = v || null;
+  if (v === ghostDoneCycle) return false;
   ghostDoneCycle = v;
-  try { localStorage.setItem('kiku-ghost-done', v); } catch(e) {}
+  try { v ? localStorage.setItem('kiku-ghost-done', v) : localStorage.removeItem('kiku-ghost-done'); } catch(e) {}
   return true;
 }
+// 정확히 "이번 기산일"이 완료로 기록된 경우만 완료 (다음 기산일이 되면 자동으로 새 정리 시작)
 function isCurrentCycleDone() {
-  return !!ghostDoneCycle && ghostDoneCycle >= toDateStr(getGhostCycleDate(0));
+  return ghostDoneCycle === toDateStr(getGhostCycleDate(0));
 }
 // 앱 전체에서 회원 상태(정상/신규/유령)를 판단하는 기준 기산일
 function getStatusCycle() {
@@ -2278,6 +2298,8 @@ function renderGhost() {
         : `<div class="alert alert-info"><i class="ti ti-history"></i>지난 정리 주기(기산일 ${formatDate(cd)})를 조회 중입니다. 참고용입니다.</div>`;
   if (resetBtn) resetBtn.style.display = isCurrentCycle && !cycleDone ? '' : 'none';
   if (doneBtn) doneBtn.style.display = isCurrentCycle && !cycleDone ? '' : 'none';
+  const undoBtn = document.getElementById('ghost-undo-btn');
+  if (undoBtn) undoBtn.style.display = cycleDone ? '' : 'none';
   const ghostList = members.filter(m=>getMemberStatus(m,cd)==='ghost');
   const warnList = members.filter(m=>getMemberStatus(m,cd)==='contacted');
   const tableEl = document.getElementById('ghost-table-area');
@@ -2559,8 +2581,14 @@ function renderProfileList() {
   if(selectedMemberId){renderMemberProfile(selectedMemberId);return;}
   if(members.length===0){el.innerHTML='<div class="empty-state"><i class="ti ti-users"></i>등록된 회원이 없습니다.</div>';return;}
   const sorted=sortMembersByName(members);
-  el.innerHTML=`<div style="margin-bottom:12px"><input type="search" id="profile-search-input" placeholder="이름·별명 검색" value="${esc(profileSearchQuery)}" oninput="filterProfileList(this.value)" style="width:100%;max-width:300px"></div>
-  <div id="profile-list-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">
+  // 검색칸은 한 번만 만들고 아래 카드 목록만 다시 그림 (데이터가 바뀌어도 입력 중인 검색칸 포커스 유지)
+  let grid=document.getElementById('profile-list-grid');
+  if(!grid||!el.contains(grid)){
+    el.innerHTML=`<div style="margin-bottom:12px"><input type="search" id="profile-search-input" placeholder="이름·별명 검색" value="${esc(profileSearchQuery)}" oninput="filterProfileList(this.value)" style="width:100%;max-width:300px"></div>
+  <div id="profile-list-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px"></div>`;
+    grid=document.getElementById('profile-list-grid');
+  }
+  grid.innerHTML=`
     ${sorted.map(m=>{
       const attended=bungs.filter(b=>(b.attendees||[]).includes(m.id)).length;
       const rate=bungs.length>0?Math.round(attended/bungs.length*100):0;
@@ -2572,8 +2600,7 @@ function renderProfileList() {
         <div style="font-size:11px;padding:2px 6px;border-radius:var(--radius);background:${grade.bg};color:${grade.color};font-weight:500;display:inline-block;margin-bottom:6px">${grade.label}</div>
         <div style="font-size:11px;color:var(--text2)">${rate}% · 업적 ${achvCount}개</div>
       </div>`;
-    }).join('')}
-  </div>`;
+    }).join('')}`;
   if (profileSearchQuery) filterProfileList(profileSearchQuery);
 }
 
@@ -3683,7 +3710,7 @@ window.deleteRollingMessage = async function(id, memberId) {
 
 const UPDATES=[
   {version:'v4.18.0',date:'2026.10.04',items:['화면 효과 추가 — 탭을 옮길 때 내용이 부드럽게 떠오르고, 팝업이 열리고 닫힐 때 자연스럽게 나타났다 사라지도록 변경','저장·삭제·복사 등을 하면 화면 아래에 잠깐 결과 알림(토스트)이 떴다 사라짐','앱을 처음 열 때 빈 화면 대신 🎤 로딩 화면 표시, 다크 모드도 첫 화면부터 바로 적용','오늘 있는 벙은 대시보드에 "오늘 · D-DAY"로 강조, 벙 목록에는 "오늘" 배지가 은은하게 깜빡임','참석자 태그가 추가될 때 톡 튀어나오는 효과, 통계·명예의 전당 막대그래프가 차오르는 효과, 카드에 마우스를 올리면 살짝 떠오르는 효과','다크/라이트 모드 전환 시 색이 부드럽게 바뀜, 버튼을 누르면 살짝 눌리는 느낌 추가, 저장 중인 버튼에는 로딩 표시','기기에서 "동작 줄이기"를 켜둔 경우에는 애니메이션이 자동으로 꺼짐']},
-  {version:'v4.17.0',date:'2026.10.04',items:['유령 현황 기준 통일 — 기산일이 지난 뒤 정리를 마치기 전까지는 대시보드·회원 명단·유령 정리 탭이 모두 "이번 정리" 기준으로 표시되고, 초기화(또는 "이미 정리했어요")를 누르면 "다음 정리" 기준 미리보기로 바뀜 (예전에는 기산일 다음 날부터 지난주에 온 회원까지 전부 유령 대상으로 보였음). 정리 완료 상태는 서버에 저장되어 다른 운영진 화면에도 반영 (저장 권한이 없으면 완료를 누른 기기에만 반영)','운영진에게는 이번 정리가 남아 있으면 대시보드 상단에 "정리하기" 안내 표시, 다음 정리일까지 남은 날짜를 달력 날짜 기준으로 정확히 계산','벙 목록을 월별로 묶어 보여주고 벙 이름·장소·참석자(별명 포함)로 검색 가능, 예정 벙에는 D-day 표시','벙 추가·수정 시 예전에 입력했던 장소·시간·주제를 자동완성으로 추천, 벙 이름을 비워두면 "10월 4일 번개"처럼 자동으로 지어짐','캘린더에서 날짜를 누르면 그날 벙을 바로 추가(운영진), "오늘" 버튼으로 이번 달로 바로 이동, 벙 상세에서 바로 수정 가능','회원 명단에서 이름을 누르면 그 회원 프로필로 이동, 회원 수 표시, 검색은 이름·별명 모두에서 대소문자 무시','지금 보던 탭이 주소 끝(#members 등)에 기억되어 새로고침해도 그대로 유지되고, 휴대폰 뒤로가기로 이전 탭으로 돌아가거나 열린 팝업만 닫을 수 있음. Esc 키로도 팝업 닫기','갤러리 사진 크게 보기에서 좌우 버튼·키보드 화살표·스와이프로 사진 넘기기','공지사항 빨간 점은 마지막으로 확인한 뒤 새 공지가 올라왔을 때만 표시','통계 탭의 "최근 2개월"을 오늘 기준 최근 두 달로 변경 (기산일 직후에는 기간이 며칠뿐이라 통계가 거의 비어 보이던 문제)','백업 파일에 게시글·플레이리스트·시즌 업적·정산 내역까지 함께 저장','휴대폰에서 입력칸을 누를 때 화면이 확대되던 문제 방지, 금액 입력칸은 숫자 키패드로 열림','카카오톡 인앱 브라우저처럼 복사 기능이 막힌 환경에서도 공지·정산·회고·퇴출 메시지 복사가 되도록 보완','오늘의 노래 추천에 유튜브 링크가 있으면 바로 듣기 링크 표시, 연결이 끊기면 상단 상태줄에 오류 표시']},
+  {version:'v4.17.0',date:'2026.10.04',items:['유령 현황 기준 통일 — 기산일이 지난 뒤 정리를 마치기 전까지는 대시보드·회원 명단·유령 정리 탭이 모두 "이번 정리" 기준으로 표시되고, 초기화(또는 "이미 정리했어요")를 누르면 "다음 정리" 기준 미리보기로 바뀜 (예전에는 기산일 다음 날부터 지난주에 온 회원까지 전부 유령 대상으로 보였음). 정리 완료 상태는 서버에 저장되어 다른 운영진 화면에도 반영 (저장 권한이 없으면 완료를 누른 기기에만 반영된다고 알려줌), 실수로 완료했으면 "완료 취소"로 되돌릴 수 있음','운영진에게는 이번 정리가 남아 있으면 대시보드 상단에 "정리하기" 안내 표시, 다음 정리일까지 남은 날짜를 달력 날짜 기준으로 정확히 계산','벙 목록을 월별로 묶어 보여주고 벙 이름·장소·참석자(별명 포함)로 검색 가능, 예정 벙에는 D-day 표시','벙 추가·수정 시 예전에 입력했던 장소·시간·주제를 자동완성으로 추천, 벙 이름을 비워두면 "10월 4일 번개"처럼 자동으로 지어짐','캘린더에서 날짜를 누르면 그날 벙을 바로 추가(운영진), "오늘" 버튼으로 이번 달로 바로 이동, 벙 상세에서 바로 수정 가능','회원 명단에서 이름을 누르면 그 회원 프로필로 이동, 회원 수 표시, 검색은 이름·별명 모두에서 대소문자 무시','지금 보던 탭이 주소 끝(#members 등)에 기억되어 새로고침해도 그대로 유지되고, 휴대폰 뒤로가기로 이전 탭으로 돌아가거나 열린 팝업만 닫을 수 있음. Esc 키로도 팝업 닫기','갤러리 사진 크게 보기에서 좌우 버튼·키보드 화살표·스와이프로 사진 넘기기','공지사항 빨간 점은 마지막으로 확인한 뒤 새 공지가 올라왔을 때만 표시','통계 탭의 "최근 2개월"을 오늘 기준 최근 두 달로 변경 (기산일 직후에는 기간이 며칠뿐이라 통계가 거의 비어 보이던 문제)','백업 파일에 게시글·플레이리스트·시즌 업적·정산 내역까지 함께 저장','휴대폰에서 입력칸을 누를 때 화면이 확대되던 문제 방지, 금액 입력칸은 숫자 키패드로 열림','카카오톡 인앱 브라우저처럼 복사 기능이 막힌 환경에서도 공지·정산·회고·퇴출 메시지 복사가 되도록 보완','오늘의 노래 추천에 유튜브 링크가 있으면 바로 듣기 링크 표시, 연결이 끊기면 상단 상태줄에 오류 표시']},
   {version:'v4.16.1',date:'2026.10.04',items:['[버그 수정] 정산에서 "벙 선택"으로 시작했다가 "직접 입력"으로 바꾸면, 아무도 체크하지 않았는데 이전 벙 참석자 인원수로 나눠 계산되고 정산 텍스트에 회원 ID가 찍히던 문제 수정 — 모드나 벙을 바꾸면 항목 참여자가 새 참가자 기준으로 다시 맞춰짐','[버그 수정] 정산 직접 입력에서 참가자를 나중에 추가하면 이미 만든 항목에 포함되지 않던 문제 수정 (추가한 사람은 모든 항목에 자동 포함, 빠지는 항목만 체크 해제)','[버그 수정] 정산 저장 후 정산 탭 목록에 바로 안 보이던 문제, 항목명을 비워두면 금액은 계산되는데 저장 내역에서는 빠지던 문제 수정','[버그 수정] 벙 추가·수정 참석자 목록에서 체크박스를 직접 누르면 선택이 안 되고, 이름 글자를 눌러야만 선택되던 문제 수정 (체크박스와 위쪽 태그가 항상 같게 유지)','[버그 수정] 일반 회원·게스트에게도 화면이 다시 그려지면 벙·회원 수정/삭제 버튼이 보이던 문제 수정','[버그 수정] 한국 시간 오전 9시 전에 벙·회원을 추가하면 기본 날짜가 어제로 들어가던 문제, 오늘 있는 벙이 오전 9시 이후 "완료"로 바뀌고 대시보드에서 사라지던 문제 수정','[버그 수정] 회원 명단 정렬(가입일순/이름순/참여율순)을 바꿔도 아무 변화가 없던 문제 수정','[버그 수정] 회원 프로필 검색에서 프로필 사진이 있는 회원은 검색되지 않던 문제 수정','[버그 수정] 한글 입력 중 엔터를 누르면 마지막 글자가 입력칸에 남거나 댓글이 두 번 등록될 수 있던 문제 수정','[버그 수정] 저장 버튼을 빠르게 두 번 누르면 벙·회원·글이 두 개씩 저장되던 문제 수정 (처리 중에는 버튼 잠금)','[버그 수정] 노래 토너먼트 투표창을 바깥 클릭으로 닫으면 투표가 바뀔 때마다 창이 다시 뜨던 문제 수정','[버그 수정] 12월 말에 1월 초 가입 기념일이 보이지 않던 문제 수정, 참석자에서 빠져 최근 참여일이 앞당겨질 때 "유령에서 부활" 업적이 잘못 달리던 문제 수정','[보안] 게시글 제목·닉네임·메모 등에 HTML/스크립트를 넣으면 다른 사람 화면에서 실행될 수 있던 문제 수정 — 사용자가 입력한 글은 모두 글자 그대로 표시']},
   {version:'v4.16.0',date:'2026.10.04',items:['벙 추가 시 구분 기본값을 "번개"로 변경','회원 별명 기능 추가 — 회원 명단에 "별명" 칸이 생기고 회원 추가·수정 화면, 별명 칸의 편집 버튼, "별명 관리"(전체 회원 한 번에 입력)에서 별명을 넣을 수 있음 (예: 고의석 → 의석, uiseok)','벙 참석자·정산 이름 입력 시 대소문자·띄어쓰기를 구분하지 않고(hyeon → Hyeon), 별명으로도 입력 가능(의석 → 고의석). 두 글자 이상이면 일부만 입력해도 한 명으로 특정되면 바로 추가','입력하는 동안 아래 회원 목록이 이름·별명으로 바로 걸러지고, 여러 명이 해당되면 누구인지 고르라고 안내, 없는 이름은 안내 문구 표시','정산 직접 입력에서 이름을 치면 회원 추천이 뜨고, 회원 명단에 없는 이름은 게스트로 구분 표시. 직접 입력 정산에 이름을 붙일 수 있음','별명이 다른 회원 이름·별명과 겹치면 저장 전에 알려줌']},
   {version:'v4.15.0',date:'2026.08.03',items:['유령 정리 탭에 정리 주기 선택 드롭다운 추가 — 기산일이 지나면 이전 두 달 판정 기준을 더 이상 볼 수 없던 문제 수정, 이번 정리 주기가 지난 뒤에도(다음 짝수 달 1일 전까지) 목록 조회·초기화가 계속 가능하며 최근 12회분의 지난 정리 주기와 다음 정리 예정도 조회 가능']},
@@ -3774,22 +3801,47 @@ window.switchTab = function(tab, opts = {}) {
   if(tab==='notice') { markNoticesSeen(); updateNoticeDot(); }
 };
 
+// 주소 끝(#...)에서 탭 이름 읽기 (잘린 링크처럼 잘못된 % 표기가 있어도 오류 없이)
+function hashTab() {
+  const raw = location.hash.slice(1);
+  try { return decodeURIComponent(raw); } catch(e) { return raw; }
+}
 function restoreTabFromHash() {
-  const t = decodeURIComponent(location.hash.slice(1));
+  const t = hashTab();
   if (TABS.includes(t) && t !== currentTab) switchTab(t, {fromHistory: true});
 }
 
+// 팝업(모달·사진 크게 보기)이 열릴 때 기록을 하나 쌓아서, 휴대폰 뒤로가기를 누르면 팝업만 닫히게 함
+// (접속 직후 탭을 옮기기 전이라도 뒤로가기 한 번에 앱을 벗어나지 않음)
+let overlayHistory = false; // 팝업용 기록이 지금 맨 위에 있는지
+let skipPopstate = 0;       // 코드에서 history.back()을 부른 횟수만큼 popstate 무시
+function pushOverlayHistory() {
+  if (overlayHistory) return;
+  try { history.pushState({tab: currentTab, overlay: true}, ''); overlayHistory = true; } catch(e) {}
+}
+function popOverlayHistory() {
+  if (!overlayHistory) return;
+  overlayHistory = false;
+  skipPopstate++;
+  try { history.back(); } catch(e) { skipPopstate--; }
+}
+
 window.addEventListener('popstate', () => {
+  if (skipPopstate > 0) { skipPopstate--; return; }
   if (document.getElementById('app').style.display === 'none') return;
   // 팝업이 떠 있을 때 뒤로가기 → 팝업만 닫고 탭은 그대로
   const backdrop = document.getElementById('modal-backdrop');
   const lightbox = document.getElementById('kiku-lightbox');
   if (lightbox || (backdrop.classList.contains('open') && !backdrop.classList.contains('closing'))) {
-    try { history.pushState({tab: currentTab}, '', '#' + currentTab); } catch(e) {}
-    if (lightbox) closeLightbox(); else closeModal();
+    const hadOverlayEntry = overlayHistory;
+    overlayHistory = false;
+    // 팝업용 기록이 아니라 이전 탭 기록이 빠진 경우엔 지금 탭 기록을 되돌려 놓음
+    if (!hadOverlayEntry) { try { history.pushState({tab: currentTab}, '', '#' + currentTab); } catch(e) {} }
+    if (lightbox) closeLightbox({fromHistory: true});
+    else if (!closeModal({fromHistory: true})) pushOverlayHistory(); // 닫기를 취소하면 기록 복구
     return;
   }
-  const t = decodeURIComponent(location.hash.slice(1));
+  const t = hashTab();
   switchTab(TABS.includes(t) ? t : 'dashboard', {fromHistory: true});
 });
 
@@ -4337,16 +4389,21 @@ window.confirmReset = function() {
     <div class="flex" style="justify-content:flex-end;gap:8px"><button class="btn" onclick="closeModal()">취소</button><button class="btn btn-danger" onclick="doReset()">초기화 실행</button></div>`);
 };
 
-// 이번 정리를 완료로 기록 (이 기기 + 가능하면 Firestore에도 저장해서 다른 운영진 화면에도 반영)
+// 이번 정리 완료 여부를 기록 (이 기기 + 가능하면 Firestore에도 저장해서 다른 운영진 화면에도 반영)
+// cycle이 null이면 완료 취소. 서버 저장에 실패하면 true를 돌려줌.
 async function saveGhostDoneCycle(cycle) {
-  rememberGhostDoneCycle(cycle);
+  setGhostDoneCycleLocal(cycle);
+  let localOnly = false;
   try {
-    await setDoc(doc(db, 'settings', 'ghostCleanup'), {doneCycle: cycle, doneAt: serverTimestamp(), doneBy: currentUser ? authorDisplayName() : ''});
+    await setDoc(doc(db, 'settings', 'ghostCleanup'), {doneCycle: cycle || null, doneAt: serverTimestamp(), doneBy: currentUser ? authorDisplayName() : ''});
   } catch(e) {
+    localOnly = true;
     console.warn('정리 완료 상태를 서버에 저장하지 못했어요 (이 기기에만 기록됨):', e.message);
   }
   ghostSelectedOffset = null;
   renderAll();
+  if (localOnly) toast('서버 저장 권한이 없어 이 기기에만 기록했어요. 다른 운영진 화면에는 반영되지 않아요', 'info');
+  return localOnly;
 }
 
 window.doReset = async function() {
@@ -4363,6 +4420,14 @@ window.markGhostCycleDone = async function() {
   if (!confirm(`이번 정리(${formatDate(cycle)})를 이미 마치셨나요?\n완료로 표시하면 대시보드·회원 명단이 다음 정리 기준으로 바뀌어요. (회원 데이터는 바뀌지 않아요)`)) return;
   await saveGhostDoneCycle(cycle);
   toast(`이번 정리(${formatDate(cycle)})를 완료로 표시했어요`);
+};
+
+// 실수로 완료 표시했을 때 되돌리기 (연락 여부 초기화는 되돌리지 않음)
+window.undoGhostCycleDone = async function() {
+  const cycle = toDateStr(getGhostCycleDate(0));
+  if (!confirm(`이번 정리(${formatDate(cycle)})의 완료 표시를 취소할까요?\n대시보드·회원 명단이 다시 이번 정리 기준으로 바뀌어요. (초기화한 연락 여부는 되돌아오지 않아요)`)) return;
+  await saveGhostDoneCycle(null);
+  toast('완료 표시를 취소했어요', 'info');
 };
 
 // ── 벙 참석자 선택기 동작 ───────────────────────────────────────────
@@ -4449,18 +4514,19 @@ function openModal(html, size){
   const backdrop = document.getElementById('modal-backdrop');
   const content = document.getElementById('modal-content');
   clearTimeout(_modalCloseTimer);
+  // 닫히는 중에 다시 여는 경우(팝업 내용 교체)도 "새로 연 것"으로 보고 뒤로가기 기록을 다시 쌓음
+  const wasOpen = backdrop.classList.contains('open') && !backdrop.classList.contains('closing');
   backdrop.classList.remove('closing');
-  const wasOpen = backdrop.classList.contains('open');
   content.innerHTML = html;
   content.classList.toggle('modal-lg', size === 'lg');
   backdrop.classList.add('open');
-  if (!wasOpen) content.scrollTop = 0;
+  if (!wasOpen) { content.scrollTop = 0; pushOverlayHistory(); }
   // 첫 입력칸(autofocus)에 커서. 휴대폰에서는 키보드가 갑자기 올라오지 않도록 마우스 환경에서만.
   const af = content.querySelector('[autofocus]');
   if (af && window.matchMedia('(hover:hover) and (pointer:fine)').matches) setTimeout(() => af.focus(), 30);
 }
 let _icUnsavedActive = false; // 이상형월드컵 제작/플레이 중 닫기 보호
-window.closeModal = function(){
+window.closeModal = function(opts){
   if (_icUnsavedActive) {
     if (!confirm('작성/진행 중인 내용이 사라집니다. 정말 닫을까요?')) return false;
     _icUnsavedActive = false;
@@ -4468,10 +4534,12 @@ window.closeModal = function(){
   // 노래 토너먼트 투표창을 바깥 클릭·Esc로 닫아도 실시간 구독이 남아 창이 다시 뜨는 일이 없도록 정리
   if (activeTournamentUnsub) { activeTournamentUnsub(); activeTournamentUnsub = null; activeTournamentData = null; }
   const backdrop = document.getElementById('modal-backdrop');
-  if (!backdrop.classList.contains('open')) return true;
+  if (!backdrop.classList.contains('open') || backdrop.classList.contains('closing')) return true;
   backdrop.classList.add('closing');
   clearTimeout(_modalCloseTimer);
   _modalCloseTimer = setTimeout(() => backdrop.classList.remove('open', 'closing'), 160);
+  // 버튼·Esc·바깥 클릭으로 닫았으면 팝업용 뒤로가기 기록도 정리 (뒤로가기로 닫은 경우는 이미 빠져 있음)
+  if (!(opts && opts.fromHistory)) popOverlayHistory();
   return true;
 };
 // 텍스트 드래그 중 마우스가 배경으로 나가서 click이 발생해도 닫히지 않도록,
@@ -4518,4 +4586,4 @@ function initTheme(){
 // 저장·삭제 버튼 중복 클릭 방지 (처리 중에는 버튼에 로딩 표시)
 ['addNotice','editNotice','addPost','editPost','addComment','addMember','editMember','saveAliases','saveAliasManager',
  'addBung','editBung','deleteBung','deleteMember','saveSettlement','submitRollingMessage','addPlaylistSong',
- 'requestProfileLink','saveMyProfile','saveRole','doReset','markGhostCycleDone'].forEach(guardAction);
+ 'requestProfileLink','saveMyProfile','saveRole','doReset','markGhostCycleDone','undoGhostCycleDone'].forEach(guardAction);
