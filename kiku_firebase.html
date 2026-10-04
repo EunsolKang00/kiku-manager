@@ -6,6 +6,10 @@
 <title>KIKU 회원 관리</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎤</text></svg>">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<script>
+  // 저장된 다크/라이트 테마를 첫 화면부터 적용 (로딩 중 하얗게 번쩍이는 것 방지)
+  try { var t = localStorage.getItem('kiku-theme') || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light'); document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#fff;--bg2:#f7f7f5;--bg3:#f0efe9;--text:#1a1a1a;--text2:#6b6b6b;--text3:#9a9a9a;--border:rgba(0,0,0,0.1);--border2:rgba(0,0,0,0.18);--radius:8px;--radius-lg:12px;--danger-bg:#FCEBEB;--danger:#A32D2D;--danger-border:#F09595;--warn-bg:#FAEEDA;--warn:#854F0B;--warn-border:#EF9F27;--info-bg:#E6F1FB;--info:#185FA5;--info-border:#85B7EB;--success-bg:#EAF3DE;--success:#3B6D11;--success-border:#97C459;--purple-bg:#EEEDFE;--purple:#534AB7}
@@ -155,7 +159,117 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
 .ic-vs-side.ic-lose .ic-media-box{transform:scale(0.88)}
 .ic-vs-mid{display:flex;align-items:center;font-size:12px;color:var(--text2);font-weight:600;transition:opacity 0.3s ease}
 .ic-vs-mid.ic-fade{opacity:0}
+
+/* 운영진 전용 요소: 나중에 다시 그려지는 버튼까지 CSS로 한 번에 숨김 */
+body:not(.is-admin) .edit-only{display:none!important}
+.is-hidden{display:none!important}
+
+/* 별명 · 이름 입력 · 목록 보조 스타일 */
+.alias-chip{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;background:var(--bg3);color:var(--text2);margin:1px 3px 1px 0;white-space:nowrap}
+.alias-edit-btn{border:0.5px dashed var(--border2);background:none;color:var(--text3);font-size:11px;padding:1px 7px;border-radius:20px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.alias-edit-btn:hover{color:var(--text);border-color:var(--text2)}
+.member-link{cursor:pointer;border-bottom:1px dashed transparent;transition:border-color .15s ease}
+.member-link:hover{border-bottom-color:var(--text2)}
+.picker-msg{font-size:12px;color:var(--warn);margin:-2px 0 8px;line-height:1.5}
+.picker-msg:empty{display:none}
+.attendee-label{border-radius:6px;padding-left:4px;padding-right:4px}
+.attendee-label .alias-hint{font-size:11px;color:var(--text3)}
+.attendee-label.is-hidden{display:none}
+.tag-area{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:28px;align-items:center}
+.tag-area .tag-empty{font-size:12px;color:var(--text3)}
+.attendee-tag .tag-x{cursor:pointer;margin-left:4px;opacity:.65}
+.attendee-tag .tag-x:hover{opacity:1}
+.attendee-tag.guest{background:var(--bg2);color:var(--text2);border:0.5px dashed var(--border2)}
+.name-suggest{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.name-suggest:empty{display:none}
+.suggest-chip{border:0.5px solid var(--border2);background:var(--bg);border-radius:20px;padding:3px 10px;font-size:12px;cursor:pointer;color:var(--text);font-family:inherit}
+.suggest-chip:hover{background:var(--bg2)}
+.suggest-chip small{color:var(--text3);margin-left:3px}
+.badge-today{background:var(--danger-bg);color:var(--danger)}
+.month-divider{font-size:12px;font-weight:500;color:var(--text2);margin:18px 2px 8px;display:flex;align-items:center;gap:8px}
+.month-divider:first-child{margin-top:0}
+.month-divider::after{content:'';flex:1;height:0.5px;background:var(--border)}
+.bung-card{background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;margin-bottom:10px}
+.bung-card.is-today{border-color:var(--danger-border)}
+.cal-day.clickable{cursor:pointer}
+.cal-day.clickable:hover{background:var(--bg3)}
+.profile-grid-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem;cursor:pointer}
+.gallery-tile img{transition:transform .35s ease}
+.settle-hint{font-size:11px;color:var(--text3);margin-top:6px}
+
+/* ── 애니메이션 · 효과 ─────────────────────────────────────────── */
+@keyframes kk-fade-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes kk-fade-in{from{opacity:0}to{opacity:1}}
+@keyframes kk-fade-out{from{opacity:1}to{opacity:0}}
+@keyframes kk-modal-in{from{opacity:0;transform:translateY(16px) scale(.97)}to{opacity:1;transform:none}}
+@keyframes kk-modal-out{from{opacity:1;transform:none}to{opacity:0;transform:translateY(10px) scale(.98)}}
+@keyframes kk-pop{0%{opacity:0;transform:scale(.6)}70%{opacity:1;transform:scale(1.08)}100%{opacity:1;transform:scale(1)}}
+@keyframes kk-bar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes kk-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@keyframes kk-bounce{0%,100%{transform:translateY(0)}35%{transform:translateY(-6px)}55%{transform:translateY(0)}}
+@keyframes kk-ring{0%{box-shadow:0 0 0 0 rgba(163,45,45,.35)}70%{box-shadow:0 0 0 6px rgba(163,45,45,0)}100%{box-shadow:0 0 0 0 rgba(163,45,45,0)}}
+@keyframes kk-toast-in{from{opacity:0;transform:translateY(14px) scale(.96)}to{opacity:1;transform:none}}
+@keyframes kk-toast-out{to{opacity:0;transform:translateY(8px) scale(.97)}}
+@keyframes kk-dot{0%,80%,100%{opacity:.25;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+@keyframes kk-shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-4px)}40%,80%{transform:translateX(4px)}}
+@keyframes kk-spin{to{transform:rotate(360deg)}}
+
+.section.active{animation:kk-fade-in .2s ease both}
+.section.active > *{animation:kk-fade-up .38s cubic-bezier(.2,.7,.3,1) both}
+.section.active > *:nth-child(2){animation-delay:.04s}
+.section.active > *:nth-child(3){animation-delay:.08s}
+.section.active > *:nth-child(4){animation-delay:.12s}
+.section.active > *:nth-child(5){animation-delay:.16s}
+.section.active > *:nth-child(n+6){animation-delay:.2s}
+.login-card{animation:kk-modal-in .45s cubic-bezier(.2,.8,.3,1) both}
+.modal-backdrop.open{animation:kk-fade-in .18s ease both}
+.modal-backdrop.open .modal{animation:kk-modal-in .26s cubic-bezier(.2,.8,.3,1) both}
+.modal-backdrop.closing{animation:kk-fade-out .16s ease both;pointer-events:none}
+.modal-backdrop.closing .modal{animation:kk-modal-out .16s ease both}
+.btn,.nav-item,.suggest-chip,.alias-edit-btn,.notice-card,.profile-grid-card,.bung-card{transition:background-color .15s ease,border-color .15s ease,color .15s ease,opacity .15s ease,transform .18s ease,box-shadow .18s ease}
+.btn:active:not(:disabled){transform:scale(.97)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.is-busy{opacity:.75;cursor:progress;pointer-events:none}
+.btn.is-busy::before{content:'';display:inline-block;width:10px;height:10px;margin-right:6px;vertical-align:-1px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:kk-spin .7s linear infinite}
+.attendee-tag.pop{animation:kk-pop .24s ease both}
+.bar-fill{transform-origin:left center;animation:kk-bar .8s cubic-bezier(.2,.8,.3,1) both}
+.hero-wave{animation:kk-float 7s ease-in-out infinite}
+.hero-dday.is-today{color:var(--danger);font-size:44px;animation:kk-bounce 1.8s ease-in-out infinite}
+.badge-today{animation:kk-ring 2s ease-out infinite}
+.shake{animation:kk-shake .32s ease}
+@media (hover:hover){
+  .notice-card[onclick]:hover,.profile-grid-card:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.07);border-color:var(--text2)}
+  :root[data-theme='dark'] .notice-card[onclick]:hover,:root[data-theme='dark'] .profile-grid-card:hover{box-shadow:0 8px 22px rgba(0,0,0,.4)}
+  .bung-card:hover{border-color:var(--border2)}
+  .gallery-tile:hover img{transform:scale(1.05)}
+}
+html.theme-anim,html.theme-anim *{transition:background-color .35s ease,color .35s ease,border-color .35s ease!important}
+
+/* 토스트 알림 */
+#toast-wrap{position:fixed;left:0;right:0;bottom:24px;z-index:400;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;padding:0 16px}
+.toast{display:flex;align-items:center;gap:8px;max-width:440px;background:var(--text);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:13px;line-height:1.4;box-shadow:0 8px 24px rgba(0,0,0,.18);animation:kk-toast-in .26s cubic-bezier(.2,.8,.3,1) both}
+.toast i{font-size:16px;flex-shrink:0}
+.toast.toast-error{background:var(--danger);color:#fff}
+.toast.out{animation:kk-toast-out .22s ease forwards}
+
+/* 첫 로딩 화면 */
+.boot-splash{position:fixed;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:var(--bg3);z-index:500;transition:opacity .35s ease,visibility .35s ease}
+.boot-splash.hide{opacity:0;visibility:hidden}
+.boot-logo{font-size:52px;animation:kk-float 1.6s ease-in-out infinite}
+.boot-text{font-size:18px;font-weight:500;letter-spacing:3px}
+.boot-dots{display:flex;gap:5px}
+.boot-dots span{width:6px;height:6px;border-radius:50%;background:var(--text2);animation:kk-dot 1.2s infinite}
+.boot-dots span:nth-child(2){animation-delay:.15s}
+.boot-dots span:nth-child(3){animation-delay:.3s}
+.boot-msg{font-size:12px;color:var(--text2);min-height:16px;text-align:center;line-height:1.6}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;animation-delay:0s!important;transition-duration:.01ms!important}
+}
 @media(max-width:640px){
+  /* iOS에서 입력칸을 누르면 화면이 확대되는 문제 방지 (16px 미만이면 자동 확대됨) */
+  input[type=text],input[type=date],input[type=search],select,textarea{font-size:16px!important}
+  #toast-wrap{bottom:84px}
   .dash-grid-2col{grid-template-columns:1fr}
   .profile-stat-grid{grid-template-columns:repeat(2,1fr)}
   .main-content{padding:0.875rem}
@@ -174,6 +288,20 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
 </style>
 </head>
 <body>
+
+<div id="boot-splash" class="boot-splash" aria-live="polite">
+  <div class="boot-logo">🎤</div>
+  <div class="boot-text">KIKU</div>
+  <div class="boot-dots"><span></span><span></span><span></span></div>
+  <div class="boot-msg" id="boot-msg"></div>
+</div>
+<script>
+  // 네트워크가 느려 한참 로딩 화면에 머물면 새로고침 안내
+  setTimeout(function () {
+    var s = document.getElementById('boot-splash'), m = document.getElementById('boot-msg');
+    if (s && m && !s.classList.contains('hide')) m.innerHTML = '연결이 조금 느리네요… 잠시만 기다려주세요.<br><a href="#" onclick="location.reload();return false" style="color:var(--info)">새로고침</a>';
+  }, 8000);
+</script>
 
 <div id="login-screen" class="login-screen" style="display:none">
   <div class="login-card">
@@ -288,20 +416,21 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
       <div id="sec-members" class="section">
         <div id="link-requests-area" class="edit-only"></div>
         <div class="flex-between mb-2">
-          <h3 style="margin-bottom:0">전체 회원</h3>
+          <h3 style="margin-bottom:0">전체 회원 <span id="member-count" style="font-size:13px;font-weight:400;color:var(--text2)"></span></h3>
           <div class="flex" style="gap:8px;flex-wrap:wrap">
-            <input type="search" id="member-search-input" placeholder="검색..." style="width:120px;padding:5px 10px" oninput="filterMembers(this.value)">
-            <select id="member-sort" onchange="renderMembers()" style="padding:5px 10px;font-size:13px">
+            <input type="search" id="member-search-input" placeholder="이름·별명 검색" style="width:140px;padding:5px 10px" oninput="filterMembers(this.value)">
+            <select id="member-sort" onchange="renderMembers()" style="padding:5px 10px;font-size:13px;width:auto">
               <option value="join">가입일순</option>
               <option value="name">이름순</option>
               <option value="rate">참여율순</option>
             </select>
             <button class="btn" onclick="openLinkProfileModal()"><i class="ti ti-link"></i>내 프로필 연결</button>
+            <button class="btn edit-only" onclick="openAliasManager()"><i class="ti ti-tags"></i>별명 관리</button>
             <button class="btn btn-primary edit-only" onclick="openAddMember()"><i class="ti ti-plus"></i>회원 추가</button>
           </div>
         </div>
         <div style="border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto">
-          <table style="min-width:640px"><thead><tr><th>이름</th><th>가입일</th><th>최근 참여일</th><th style="text-align:center">운영진 연락</th><th>상태</th><th>등급</th><th>메모</th><th class="edit-only"></th></tr></thead>
+          <table style="min-width:760px"><thead><tr><th>이름</th><th>별명</th><th>가입일</th><th>최근 참여일</th><th style="text-align:center">운영진 연락</th><th id="member-status-th">상태</th><th>등급</th><th>메모</th><th class="edit-only"></th></tr></thead>
           <tbody id="member-tbody"></tbody></table>
           <div id="member-empty" class="empty-state" style="display:none"><i class="ti ti-users"></i>등록된 회원이 없습니다.</div>
         </div>
@@ -310,7 +439,10 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
       <div id="sec-bung" class="section">
         <div class="flex-between mb-2">
           <h3 style="margin-bottom:0">벙 목록</h3>
-          <button class="btn btn-primary edit-only" onclick="openAddBung()"><i class="ti ti-plus"></i>벙 추가</button>
+          <div class="flex" style="gap:8px;flex-wrap:wrap">
+            <input type="search" id="bung-search-input" placeholder="벙·장소·참석자 검색" style="width:170px;padding:5px 10px" oninput="filterBungs(this.value)">
+            <button class="btn btn-primary edit-only" onclick="openAddBung()"><i class="ti ti-plus"></i>벙 추가</button>
+          </div>
         </div>
         <div id="bung-list"></div>
       </div>
@@ -329,9 +461,11 @@ h3{font-size:15px;font-weight:500;margin-bottom:10px}
         <div class="flex-between mb-2">
           <h3 style="margin-bottom:0">유령 판정 목록</h3>
           <div class="flex" style="flex-wrap:wrap;align-items:center">
-            <select id="ghost-period-select" onchange="onGhostPeriodChange(this.value)" style="padding:5px 10px;font-size:13px"></select>
+            <select id="ghost-period-select" onchange="onGhostPeriodChange(this.value)" style="padding:5px 10px;font-size:13px;width:auto;max-width:100%"></select>
             <span class="text-sm text-secondary" id="ghost-calc-info"></span>
             <button class="btn btn-info btn-sm edit-only" onclick="openGhostMessage()"><i class="ti ti-message"></i>퇴출 메시지</button>
+            <button class="btn btn-sm edit-only" id="ghost-done-btn" onclick="markGhostCycleDone()" style="display:none" title="초기화 없이 이번 정리를 완료로만 표시"><i class="ti ti-check"></i>이미 정리했어요</button>
+            <button class="btn btn-sm edit-only" id="ghost-undo-btn" onclick="undoGhostCycleDone()" style="display:none" title="이번 정리 완료 표시 되돌리기"><i class="ti ti-arrow-back-up"></i>완료 취소</button>
             <button class="btn btn-danger btn-sm edit-only" id="reset-btn" onclick="confirmReset()" style="display:none"><i class="ti ti-refresh"></i>초기화</button>
           </div>
         </div>
